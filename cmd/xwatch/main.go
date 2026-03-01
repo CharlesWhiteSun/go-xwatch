@@ -333,19 +333,19 @@ func printUsage() {
 
 func resolveRoot(rootArg string) (string, error) {
 	if rootArg != "" {
-		return filepath.Abs(rootArg)
+		return resolveAndEnsureDir(rootArg, "根目錄")
 	}
 
 	settings, err := config.Load()
 	if err == nil && settings.RootDir != "" {
-		return filepath.Abs(settings.RootDir)
+		return resolveAndEnsureDir(settings.RootDir, "根目錄")
 	}
 
 	exePath, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Abs(filepath.Dir(exePath))
+	return resolveAndEnsureDir(filepath.Dir(exePath), "根目錄")
 }
 
 func runAsService() error {
@@ -400,10 +400,19 @@ func runDaily(args []string) error {
 		if *formatFlag != "csv" {
 			return fmt.Errorf("目前僅支援 csv")
 		}
-		settings.DailyCSVEnabled = true
+		dir := settings.DailyCSVDir
 		if *dirFlag != "" {
-			settings.DailyCSVDir = *dirFlag
+			dir = *dirFlag
 		}
+		if dir == "" {
+			dir = defaultDir
+		}
+		resolvedDir, err := resolveAndEnsureDir(dir, "每日 CSV 目錄")
+		if err != nil {
+			return err
+		}
+		settings.DailyCSVEnabled = true
+		settings.DailyCSVDir = resolvedDir
 		if err := config.Save(settings); err != nil {
 			return err
 		}
@@ -437,7 +446,11 @@ func runDaily(args []string) error {
 			return fmt.Errorf("目前僅支援 csv")
 		}
 		if *dirFlag != "" {
-			settings.DailyCSVDir = *dirFlag
+			resolvedDir, err := resolveAndEnsureDir(*dirFlag, "每日 CSV 目錄")
+			if err != nil {
+				return err
+			}
+			settings.DailyCSVDir = resolvedDir
 		}
 		if err := config.Save(settings); err != nil {
 			return err
@@ -462,7 +475,11 @@ func runDaily(args []string) error {
 		if dir == "" {
 			dir = defaultDir
 		}
-		sink, err := pipeline.NewDailyFileSink(dir, pipeline.NewCSVRecorder)
+		resolvedDir, err := resolveAndEnsureDir(dir, "每日 CSV 目錄")
+		if err != nil {
+			return err
+		}
+		sink, err := pipeline.NewDailyFileSink(resolvedDir, pipeline.NewCSVRecorder)
 		if err != nil {
 			return fmt.Errorf("建立測試 sink 失敗: %w", err)
 		}
@@ -473,7 +490,7 @@ func runDaily(args []string) error {
 			return fmt.Errorf("寫入測試事件失敗: %w", err)
 		}
 		day := now.In(time.Local).Format("2006-01-02")
-		filePath := filepath.Join(dir, day+".csv")
+		filePath := filepath.Join(resolvedDir, day+".csv")
 		fmt.Println("測試事件已寫入:", filePath)
 		return nil
 
@@ -674,6 +691,36 @@ func promptNextAction() (string, string) {
 		// 視為直接輸入下一個指令。
 		return "command", line
 	}
+}
+
+// resolveAndEnsureDir 會去除前後空白，轉為絕對路徑，檢查是否存在，不存在時提示是否建立。
+func resolveAndEnsureDir(path string, purpose string) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", fmt.Errorf("%s 不可為空", purpose)
+	}
+	absPath, err := filepath.Abs(trimmed)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(absPath)
+	if err == nil {
+		if !info.IsDir() {
+			return "", fmt.Errorf("%s 不是資料夾: %s", purpose, absPath)
+		}
+		return absPath, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	prompt := fmt.Sprintf("%s 不存在，是否建立？(Y/n): ", absPath)
+	if !askYesNo(prompt) {
+		return "", fmt.Errorf("已取消建立 %s", absPath)
+	}
+	if mkErr := os.MkdirAll(absPath, 0o755); mkErr != nil {
+		return "", mkErr
+	}
+	return absPath, nil
 }
 
 func isInteractiveConsole() bool {
