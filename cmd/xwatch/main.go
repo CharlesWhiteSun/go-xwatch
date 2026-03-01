@@ -10,9 +10,11 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -33,6 +35,14 @@ const serviceName = "GoXWatch"
 
 var version = "dev"
 
+var opsLog struct {
+	mu     sync.Mutex
+	logger *slog.Logger
+	file   *os.File
+	date   string
+	err    error
+}
+
 func main() {
 	if runtime.GOOS != "windows" {
 		fmt.Fprintln(os.Stderr, "this program currently supports Windows service mode only")
@@ -42,10 +52,21 @@ func main() {
 	if service.IsWindowsServiceProcess() {
 		if err := runAsService(); err != nil {
 			fmt.Fprintln(os.Stderr, "service error:", err)
+			logOp("service error", "err", err)
 			os.Exit(1)
 		}
 		return
 	}
+
+	logOp("cli start", "version", version, "pid", os.Getpid(), "args", os.Args[1:])
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		logOp("cli signal", "signal", sig.String())
+		os.Exit(130)
+	}()
 
 	// 嘗試在互動模式下提示並自動提升權限，以便順利註冊/控制服務。
 	if os.Getenv("XWATCH_NO_ELEVATE") != "1" && isInteractiveConsole() && !isElevated() {
@@ -62,15 +83,19 @@ func main() {
 	for {
 		if err := runInteractive(); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
+			logOp("command error", "err", err)
 			if isAccessDenied(err) {
 				fmt.Fprintln(os.Stderr, "請以系統管理員身分執行，或用管理員權限的 PowerShell 開啟此程式。")
 			}
 			exitCode = 1
+		} else {
+			logOp("command ok")
 		}
 
 		action, cmdLine := promptNextAction()
 		switch action {
 		case "exit":
+			logOp("cli exit", "code", exitCode)
 			os.Exit(exitCode)
 		case "help":
 			fmt.Println()
@@ -100,6 +125,51 @@ func main() {
 	}
 }
 
+func getOpsLogger(now time.Time) (*slog.Logger, error) {
+	opsLog.mu.Lock()
+	defer opsLog.mu.Unlock()
+
+	if opsLog.logger != nil && opsLog.date == now.In(time.Local).Format("2006-01-02") && opsLog.err == nil {
+		return opsLog.logger, nil
+	}
+
+	if opsLog.file != nil {
+		_ = opsLog.file.Close()
+		opsLog.file = nil
+	}
+
+	dataDir, err := paths.EnsureDataDir()
+	if err != nil {
+		opsLog.err = err
+		return nil, err
+	}
+	logDir := filepath.Join(dataDir, "logs")
+	if mkErr := os.MkdirAll(logDir, 0o755); mkErr != nil {
+		opsLog.err = mkErr
+		return nil, mkErr
+	}
+	day := now.In(time.Local).Format("2006-01-02")
+	logPath := filepath.Join(logDir, fmt.Sprintf("operations_%s.log", day))
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		opsLog.err = err
+		return nil, err
+	}
+	opsLog.logger = slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	opsLog.file = f
+	opsLog.date = day
+	opsLog.err = nil
+	return opsLog.logger, nil
+}
+
+func logOp(msg string, args ...any) {
+	logger, err := getOpsLogger(time.Now())
+	if err != nil || logger == nil {
+		return
+	}
+	logger.Info(msg, args...)
+}
+
 func runInteractive() error {
 	command := ""
 	args := os.Args[1:]
@@ -107,6 +177,7 @@ func runInteractive() error {
 		command = strings.ToLower(args[0])
 		args = args[1:]
 	}
+	logOp("command", "cmd", command, "args", args)
 
 	if len(os.Args) <= 1 || command == "" {
 		printUsage()
