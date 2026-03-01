@@ -1,14 +1,15 @@
 # go-xwatch
 
-Windows 檔案/資料夾異動監控服務（單一 exe，內建 Windows 服務、自動安裝、事件日誌）。
+ Windows 檔案/資料夾異動監控服務（單一 exe，內建 Windows 服務、自動安裝、事件日誌與每日輸出）。
 
 ## 功能概要
 - 首次執行自動初始化：寫設定、註冊並啟動 Windows 服務，完成後退出；服務啟動類型為 Automatic (Delayed Start)。
 - 監控遞迴目錄變動，建立新資料夾時自動補註冊 watcher。
 - 事件日誌：寫入 `%ProgramData%\go-xwatch\journal.db`（SQLite WAL，payload 以 AES-GCM 加密，金鑰用 DPAPI 封存），並有去重/節流與寫入失敗退避。
-- 匯出：支援 `export` 子命令，格式 `json|jsonl|text`，可時間篩選；支援 `--bom`（UTF-8 BOM）與 `--out`（自訂輸出路徑，預設寫入 `%ProgramData%\go-xwatch\export_YYYYMMDD_HHMMSS.xxx`）。
+- 每日輸出：可啟用每日 CSV 檔（預設 `%ProgramData%/go-xwatch/daily`），透過緩衝批次寫入；未來可擴充 json/email 等格式。
+- 匯出：支援 `export` 子命令，格式 `json|jsonl|text`，可時間篩選；支援 `--bom`（UTF-8 BOM）與 `--out`（自訂輸出路徑，預設寫入 `%ProgramData%/go-xwatch\export_YYYYMMDD_HHMMSS.xxx`）。
 - 清理工具：`cleanup/remove` 一鍵停止並移除服務；`clear/purge/wipe` 清空事件資料庫並重建空庫。
-- 互動啟動體驗：在非服務模式偵測未以系統管理員執行時，提示是否以 UAC 重新啟動（可設 `XWATCH_NO_ELEVATE=1` 關閉）；每次指令後提供 Y/n 退出確認，輸入 n 可回到 CLI 簡易主畫面再輸入新指令。
+- 互動啟動體驗：在非服務模式偵測未以系統管理員執行時，提示是否以 UAC 重新啟動（可設 `XWATCH_NO_ELEVATE=1` 關閉）；每次指令後提供快捷選項，輸入 `h` 查看 help、`e` 退出。
 
 ## Build
 
@@ -38,10 +39,11 @@ go build -o xwatch.exe ./cmd/xwatch
 | `cleanup` / `remove` | 停止並移除服務（容忍已不存在/已停止狀態） |
 | `clear` / `purge` / `wipe` | 清空事件資料庫並重建空庫（預設先嘗試停服務，可設 `XWATCH_SKIP_SERVICE_OPS=1` 跳過） |
 | `export [flags]` | 匯出事件。旗標：`--since/--until` RFC3339 時間、`--limit`、`--all`、`--format json|jsonl|text`、`--bom`、`--out PATH`（`-` 表 stdout，預設 `%ProgramData%/go-xwatch` 產生檔名） |
+| `daily <subcommand>` | 管理每日輸出（目前支援 csv；子指令 `status|enable|disable|set|test`，可指定 `--dir`） |
 | `run [-root PATH]` | 前景模式執行，不作為服務 |
 | `help` | 顯示指令列表 |
 
-啟動時若非系統管理員，會詢問是否以 UAC 重新啟動；Enter 預設同意。每次指令完成後會詢問下一步，Enter 可直接輸入指令；輸入 `e` 退出，輸入 `h` 顯示 help。
+啟動時若非系統管理員，會詢問是否以 UAC 重新啟動；Enter 預設同意。每次指令完成後會詢問下一步，Enter 可直接輸入指令；快捷選項：`h` 顯示 help、`e` 退出。
 
 ### 初始化 / 設定
 
@@ -68,6 +70,27 @@ go build -o xwatch.exe ./cmd/xwatch
 # 依時間篩選，輸出到 stdout
 ./xwatch.exe export --since "2026-03-01T00:00:00Z" --until "2026-03-02T00:00:00Z" --limit 1000 --format json --out - > events.json
 ```
+
+### 每日輸出 (csv)
+
+```powershell
+# 查看狀態（是否啟用、輸出目錄）
+./xwatch.exe daily status
+
+# 啟用每日 CSV，指定輸出目錄（預設 %ProgramData%/go-xwatch/daily）
+./xwatch.exe daily enable --dir D:\logs\xwatch
+
+# 更新輸出目錄
+./xwatch.exe daily set --dir D:\logs\xwatch-daily
+
+# 停用每日 CSV
+./xwatch.exe daily disable
+
+# 寫入一筆測試事件到當日 CSV
+./xwatch.exe daily test --dir D:\logs\xwatch
+```
+
+目前僅支援 CSV；未來可在 `daily` 子命令擴充 `--format json|email` 等。每日輸出預設以緩衝批次寫入，目錄預設 `%ProgramData%/go-xwatch/daily`。
 
 ### 常用維運
 
