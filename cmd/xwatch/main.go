@@ -22,6 +22,7 @@ import (
 	"go-xwatch/internal/crypto"
 	"go-xwatch/internal/journal"
 	"go-xwatch/internal/paths"
+	"go-xwatch/internal/pipeline"
 	"go-xwatch/internal/service"
 	"go-xwatch/internal/watcher"
 
@@ -114,8 +115,6 @@ func runInteractive() error {
 
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	rootFlag := fs.String("root", "", "watch root directory (default: exe directory)")
-	dailyCSVFlag := fs.Bool("daily-csv", false, "enable daily CSV sink")
-	dailyDirFlag := fs.String("daily-dir", "", "daily CSV output directory (default: %ProgramData%/go-xwatch/daily)")
 	sinceFlag := fs.String("since", "", "RFC3339 timestamp filter for export")
 	untilFlag := fs.String("until", "", "optional RFC3339 upper bound for export")
 	limitFlag := fs.Int("limit", 1000, "max rows for export")
@@ -130,7 +129,7 @@ func runInteractive() error {
 
 	switch command {
 	case "init":
-		if err := initAndExit(*rootFlag, *dailyCSVFlag, *dailyDirFlag, *installFlag); err != nil {
+		if err := initAndExit(*rootFlag, *installFlag); err != nil {
 			return err
 		}
 		return nil
@@ -163,6 +162,8 @@ func runInteractive() error {
 		return clearJournal()
 	case "export":
 		return exportJournal(*sinceFlag, *untilFlag, *limitFlag, *formatFlag, *allFlag, *bomFlag, *outFlag)
+	case "daily":
+		return runDaily(args)
 	case "run":
 		root, err := resolveRoot(*rootFlag)
 		if err != nil {
@@ -176,18 +177,14 @@ func runInteractive() error {
 	}
 }
 
-func initAndExit(rootArg string, daily bool, dailyDir string, installService bool) error {
+func initAndExit(rootArg string, installService bool) error {
 	fmt.Println("[1/3] 準備初始化...")
 	root, err := resolveRoot(rootArg)
 	if err != nil {
 		return err
 	}
 	fmt.Println("[2/3] 寫入設定檔...")
-	settings := config.Settings{RootDir: root, DailyCSVEnabled: daily}
-	if dailyDir != "" {
-		settings.DailyCSVDir = dailyDir
-	}
-	if err := config.Save(settings); err != nil {
+	if err := config.Save(config.Settings{RootDir: root}); err != nil {
 		return err
 	}
 
@@ -314,7 +311,7 @@ func printUsage() {
 	fmt.Println("xwatch 可用指令：")
 	fmt.Printf("  version: %s\n", version)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "  init [-root PATH] [--daily-csv] [--daily-dir PATH] [--install-service]\t初始化設定；加上 --install-service 會註冊並啟動服務")
+	fmt.Fprintln(w, "  init [-root PATH] [--install-service]\t初始化設定；加上 --install-service 會註冊並啟動服務")
 	fmt.Fprintln(w, "  status\t顯示服務狀態、路徑與事件筆數")
 	fmt.Fprintln(w, "  start | stop\t啟動或停止服務")
 	fmt.Fprintln(w, "  uninstall\t移除服務")
@@ -328,6 +325,7 @@ func printUsage() {
 	fmt.Fprintln(w, "    --format json|jsonl|text\t匯出格式 (預設 json)")
 	fmt.Fprintln(w, "    --bom\t輸出 UTF-8 BOM 以供記事本辨識中文")
 	fmt.Fprintln(w, "    --out PATH\t輸出檔路徑，'-' 為 stdout，預設 %ProgramData%/go-xwatch")
+	fmt.Fprintln(w, "  daily <subcommand> [flags]\t管理每日輸出 (csv/json/email 等)")
 	fmt.Fprintln(w, "  run [-root PATH]\t前景模式執行，不作為服務")
 	_ = w.Flush()
 	fmt.Println("============================================================")
@@ -359,6 +357,139 @@ func runAsService() error {
 		return errors.New("empty root dir in config")
 	}
 	return service.Run(serviceName, settings)
+}
+
+func runDaily(args []string) error {
+	if len(args) == 0 {
+		printDailyUsage()
+		return nil
+	}
+
+	sub := strings.ToLower(args[0])
+	args = args[1:]
+
+	settings, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	defaultDir := filepath.Join(os.Getenv("ProgramData"), "go-xwatch", "daily")
+
+	parseFormat := func(fs *flag.FlagSet) *string {
+		return fs.String("format", "csv", "daily output format: csv|json|email (目前僅支援 csv)")
+	}
+
+	switch sub {
+	case "status":
+		dir := settings.DailyCSVDir
+		if dir == "" {
+			dir = defaultDir
+		}
+		fmt.Println("每日輸出格式: csv")
+		fmt.Println("csv 已啟用:", settings.DailyCSVEnabled)
+		fmt.Println("csv 目錄:", dir)
+		return nil
+
+	case "enable":
+		fs := flag.NewFlagSet("daily enable", flag.ContinueOnError)
+		dirFlag := fs.String("dir", "", "輸出目錄 (預設 %ProgramData%/go-xwatch/daily)")
+		formatFlag := parseFormat(fs)
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+		if *formatFlag != "csv" {
+			return fmt.Errorf("目前僅支援 csv")
+		}
+		settings.DailyCSVEnabled = true
+		if *dirFlag != "" {
+			settings.DailyCSVDir = *dirFlag
+		}
+		if err := config.Save(settings); err != nil {
+			return err
+		}
+		fmt.Println("已啟用每日 CSV 輸出。")
+		return nil
+
+	case "disable":
+		fs := flag.NewFlagSet("daily disable", flag.ContinueOnError)
+		formatFlag := parseFormat(fs)
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+		if *formatFlag != "csv" {
+			return fmt.Errorf("目前僅支援 csv")
+		}
+		settings.DailyCSVEnabled = false
+		if err := config.Save(settings); err != nil {
+			return err
+		}
+		fmt.Println("已停用每日 CSV 輸出。")
+		return nil
+
+	case "set":
+		fs := flag.NewFlagSet("daily set", flag.ContinueOnError)
+		dirFlag := fs.String("dir", "", "輸出目錄 (預設 %ProgramData%/go-xwatch/daily)")
+		formatFlag := parseFormat(fs)
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+		if *formatFlag != "csv" {
+			return fmt.Errorf("目前僅支援 csv")
+		}
+		if *dirFlag != "" {
+			settings.DailyCSVDir = *dirFlag
+		}
+		if err := config.Save(settings); err != nil {
+			return err
+		}
+		fmt.Println("每日 CSV 設定已更新。")
+		return nil
+
+	case "test":
+		fs := flag.NewFlagSet("daily test", flag.ContinueOnError)
+		dirFlag := fs.String("dir", "", "輸出目錄 (預設 %ProgramData%/go-xwatch/daily)")
+		formatFlag := parseFormat(fs)
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+		if *formatFlag != "csv" {
+			return fmt.Errorf("目前僅支援 csv")
+		}
+		dir := settings.DailyCSVDir
+		if *dirFlag != "" {
+			dir = *dirFlag
+		}
+		if dir == "" {
+			dir = defaultDir
+		}
+		sink, err := pipeline.NewDailyFileSink(dir, pipeline.NewCSVRecorder)
+		if err != nil {
+			return fmt.Errorf("建立測試 sink 失敗: %w", err)
+		}
+		defer sink.Close()
+		now := time.Now()
+		entry := journal.Entry{TS: now, Op: "TEST", Path: "\u003ctest\u003e", IsDir: false, Size: 0}
+		if err := sink.Handle(context.Background(), []journal.Entry{entry}); err != nil {
+			return fmt.Errorf("寫入測試事件失敗: %w", err)
+		}
+		day := now.In(time.Local).Format("2006-01-02")
+		filePath := filepath.Join(dir, day+".csv")
+		fmt.Println("測試事件已寫入:", filePath)
+		return nil
+
+	default:
+		return fmt.Errorf("未知子指令: %s", sub)
+	}
+}
+
+func printDailyUsage() {
+	fmt.Println("daily 指令用法：")
+	fmt.Println("  daily status")
+	fmt.Println("  daily enable [--dir PATH] [--format csv]")
+	fmt.Println("  daily disable [--format csv]")
+	fmt.Println("  daily set [--dir PATH] [--format csv]")
+	fmt.Println("  daily test [--dir PATH] [--format csv]")
+	fmt.Println("(目前僅支援 csv，其他格式預留)")
 }
 
 func exportJournal(sinceStr, untilStr string, limit int, format string, all, bom bool, outPath string) error {
