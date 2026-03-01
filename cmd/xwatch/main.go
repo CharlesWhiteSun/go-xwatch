@@ -525,10 +525,9 @@ func promptNextAction() (string, string) {
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Println()
-		fmt.Println("--------- 下一步 ----------")
-		fmt.Println("請輸入以下選項或指令")
-		fmt.Println("e) 退出程式")
-		fmt.Println("h) 顯示 help")
+		fmt.Println("請輸入指令 或 以下快捷選項")
+		fmt.Println("  h) 顯示 help")
+		fmt.Println("  e) 退出程式")
 		fmt.Fprint(os.Stderr, "> ")
 		line, _ := reader.ReadString('\n')
 		line = strings.TrimSpace(line)
