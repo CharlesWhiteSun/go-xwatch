@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sort"
 	"time"
@@ -42,14 +43,34 @@ func (a *Aggregator) Flush() []journal.Entry {
 	return out
 }
 
-// Appender defines the Append contract used by Writer.
-type Appender interface {
-	Append(ctx context.Context, entries []journal.Entry) error
+// EventSink consumes flushed entries; e.g., persist to journal or forward elsewhere.
+type EventSink interface {
+	Handle(ctx context.Context, entries []journal.Entry) error
+}
+
+// EventSinkFunc allows using a func as EventSink.
+type EventSinkFunc func(ctx context.Context, entries []journal.Entry) error
+
+// Handle implements EventSink.
+func (f EventSinkFunc) Handle(ctx context.Context, entries []journal.Entry) error {
+	return f(ctx, entries)
+}
+
+// MultiSink fan-outs to multiple sinks; stops on first error.
+type MultiSink []EventSink
+
+func (m MultiSink) Handle(ctx context.Context, entries []journal.Entry) error {
+	for _, s := range m {
+		if err := s.Handle(ctx, entries); err != nil {
+			return fmt.Errorf("sink failed: %w", err)
+		}
+	}
+	return nil
 }
 
 // Writer batches entries and applies backoff on append failures.
 type Writer struct {
-	appender    Appender
+	sink        EventSink
 	logger      *slog.Logger
 	baseBackoff time.Duration
 	maxBackoff  time.Duration
@@ -59,7 +80,7 @@ type Writer struct {
 	backoff time.Duration
 }
 
-func NewWriter(appender Appender, logger *slog.Logger, baseBackoff, maxBackoff time.Duration) *Writer {
+func NewWriter(sink EventSink, logger *slog.Logger, baseBackoff, maxBackoff time.Duration) *Writer {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -69,7 +90,7 @@ func NewWriter(appender Appender, logger *slog.Logger, baseBackoff, maxBackoff t
 	if maxBackoff <= 0 {
 		maxBackoff = 5 * time.Second
 	}
-	return &Writer{appender: appender, logger: logger, baseBackoff: baseBackoff, maxBackoff: maxBackoff}
+	return &Writer{sink: sink, logger: logger, baseBackoff: baseBackoff, maxBackoff: maxBackoff}
 }
 
 // Enqueue appends entries to the pending buffer.
@@ -88,7 +109,7 @@ func (w *Writer) Flush(ctx context.Context, now time.Time) {
 	if !w.nextTry.IsZero() && now.Before(w.nextTry) {
 		return
 	}
-	if err := w.appender.Append(ctx, w.pending); err != nil {
+	if err := w.sink.Handle(ctx, w.pending); err != nil {
 		if w.backoff == 0 {
 			w.backoff = w.baseBackoff
 		} else {

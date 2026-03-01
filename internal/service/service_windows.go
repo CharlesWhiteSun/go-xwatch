@@ -198,7 +198,9 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 	ctx, cancel := context.WithCancel(context.Background())
 
 	agg := pipeline.NewAggregator()
-	writer := pipeline.NewWriter(j, logger, 500*time.Millisecond, 5*time.Second)
+	writer := pipeline.NewWriter(pipeline.EventSinkFunc(func(ctx context.Context, entries []journal.Entry) error {
+		return j.Append(ctx, entries)
+	}), logger, 500*time.Millisecond, 5*time.Second)
 
 	go func() {
 		ticker := time.NewTicker(300 * time.Millisecond)

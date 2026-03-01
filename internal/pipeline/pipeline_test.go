@@ -14,13 +14,13 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-type stubAppender struct {
+type stubSink struct {
 	failures int
 	calls    int
 	records  [][]journal.Entry
 }
 
-func (s *stubAppender) Append(_ context.Context, entries []journal.Entry) error {
+func (s *stubSink) Handle(_ context.Context, entries []journal.Entry) error {
 	s.calls++
 	s.records = append(s.records, append([]journal.Entry(nil), entries...))
 	if s.failures > 0 {
@@ -53,7 +53,7 @@ func TestAggregatorDedupeKeepsLastPerPath(t *testing.T) {
 }
 
 func TestWriterBackoffAndRecovery(t *testing.T) {
-	stub := &stubAppender{failures: 2}
+	stub := &stubSink{failures: 2}
 	w := NewWriter(stub, slog.New(slog.NewTextHandler(io.Discard, nil)), 10*time.Millisecond, 50*time.Millisecond)
 
 	now := time.Now()
