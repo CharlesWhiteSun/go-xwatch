@@ -30,6 +30,8 @@ import (
 
 const serviceName = "GoXWatch"
 
+var version = "dev"
+
 func main() {
 	if runtime.GOOS != "windows" {
 		fmt.Fprintln(os.Stderr, "this program currently supports Windows service mode only")
@@ -296,6 +298,7 @@ func clearJournal() error {
 func printUsage() {
 	fmt.Println("============================================================")
 	fmt.Println("xwatch 可用指令：")
+	fmt.Printf("  version: %s\n", version)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "  init [-root PATH] [--install-service]\t初始化設定；加上 --install-service 會註冊並啟動服務")
 	fmt.Fprintln(w, "  status\t顯示服務狀態、路徑與事件筆數")
