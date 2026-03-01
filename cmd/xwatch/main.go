@@ -35,6 +35,8 @@ const serviceName = "GoXWatch"
 
 var version = "dev"
 
+const elevationPrompt = "偵測到目前非系統管理員，是否重新以系統管理員執行？(Y/n): "
+
 var opsLog struct {
 	mu     sync.Mutex
 	logger *slog.Logger
@@ -71,14 +73,18 @@ func main() {
 	}()
 
 	// 嘗試在互動模式下提示並自動提升權限，以便順利註冊/控制服務。
-	if os.Getenv("XWATCH_NO_ELEVATE") != "1" && isInteractiveConsole() && !isElevated() {
-		if askYesNo("偵測到目前非系統管理員，是否重新以系統管理員執行？(Y/n): ") {
-			if err := relaunchElevated(os.Args[1:]); err != nil {
-				fmt.Fprintln(os.Stderr, "無法自動提升權限，請改以系統管理員執行：", err)
-			} else {
-				return
-			}
-		}
+	decision, elevErr := evaluateElevation(os.Getenv("XWATCH_NO_ELEVATE") == "1", isInteractiveConsole(), isElevated(), askYesNo, relaunchElevated, os.Args[1:])
+	if elevErr != nil {
+		fmt.Fprintln(os.Stderr, "無法自動提升權限，請改以系統管理員執行：", elevErr)
+	}
+	switch decision {
+	case "exit":
+		fmt.Println("已取消提升權限，3 秒後自動退出...")
+		logOp("cli exit", "code", 1, "reason", "user_decline_elevate")
+		time.Sleep(3 * time.Second)
+		os.Exit(1)
+	case "relaunch":
+		return
 	}
 
 	exitCode := 0
@@ -102,12 +108,18 @@ func main() {
 		case "help":
 			fmt.Println()
 			printUsage()
+			os.Args = []string{os.Args[0]}
+			continue
 		case "command":
 			if cmdLine == "" {
 				os.Args = []string{os.Args[0]}
 			} else {
 				os.Args = append([]string{os.Args[0]}, strings.Fields(cmdLine)...)
 			}
+			exitCode = 0
+			continue
+		case "continue":
+			os.Args = []string{os.Args[0]}
 			exitCode = 0
 			continue
 		}
@@ -118,8 +130,9 @@ func main() {
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 		line = strings.TrimSpace(line)
 		if line == "" {
-			// 空白輸入時留在選單，下一輪不顯示 help
+			// 空白輸入時留在選單，下一輪不顯示 help，並清空命令狀態避免重跑上一個指令
 			suppressEmptyHelp = true
+			os.Args = []string{os.Args[0]}
 			continue
 		}
 		lower := strings.ToLower(line)
@@ -755,6 +768,23 @@ func askYesNo(prompt string) bool {
 			return false
 		}
 	}
+}
+
+// evaluateElevation 決定在互動模式下是否嘗試提升權限、退出或繼續。
+// decision 可能為：continue（照常執行）、relaunch（已觸發提升並應結束當前行程）、exit（使用者拒絕並退出）。
+func evaluateElevation(skipEnv, interactive, elevated bool, ask func(string) bool, relaunch func([]string) error, args []string) (string, error) {
+	if skipEnv || !interactive || elevated {
+		return "continue", nil
+	}
+
+	if ask(elevationPrompt) {
+		if err := relaunch(args); err != nil {
+			return "continue", err
+		}
+		return "relaunch", nil
+	}
+
+	return "exit", nil
 }
 
 func promptNextAction() (string, string) {

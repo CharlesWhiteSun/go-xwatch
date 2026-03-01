@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -242,5 +243,79 @@ func TestIsAccessDenied(t *testing.T) {
 	}
 	if isAccessDenied(fmt.Errorf("other error")) {
 		t.Fatalf("expected false for other error")
+	}
+}
+
+func TestEvaluateElevation_SkipOrElevated(t *testing.T) {
+	cases := []struct {
+		name        string
+		skipEnv     bool
+		interactive bool
+		elevated    bool
+	}{
+		{"skip env", true, true, false},
+		{"non interactive", false, false, false},
+		{"already elevated", false, true, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			decision, err := evaluateElevation(tc.skipEnv, tc.interactive, tc.elevated, func(string) bool { return false }, func([]string) error { return nil }, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if decision != "continue" {
+				t.Fatalf("decision = %s, want continue", decision)
+			}
+		})
+	}
+}
+
+func TestEvaluateElevation_Decline(t *testing.T) {
+	decision, err := evaluateElevation(false, true, false, func(prompt string) bool {
+		if prompt != elevationPrompt {
+			t.Fatalf("unexpected prompt: %s", prompt)
+		}
+		return false
+	}, func([]string) error { return nil }, []string{"--foo"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if decision != "exit" {
+		t.Fatalf("decision = %s, want exit", decision)
+	}
+}
+
+func TestEvaluateElevation_Relaunch(t *testing.T) {
+	called := false
+	decision, err := evaluateElevation(false, true, false, func(string) bool { return true }, func(args []string) error {
+		called = true
+		if len(args) != 2 || args[0] != "--foo" || args[1] != "bar" {
+			t.Fatalf("unexpected args: %#v", args)
+		}
+		return nil
+	}, []string{"--foo", "bar"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if decision != "relaunch" {
+		t.Fatalf("decision = %s, want relaunch", decision)
+	}
+	if !called {
+		t.Fatalf("relaunch not called")
+	}
+}
+
+func TestEvaluateElevation_RelaunchError(t *testing.T) {
+	relaunchErr := errors.New("boom")
+	decision, err := evaluateElevation(false, true, false, func(string) bool { return true }, func([]string) error { return relaunchErr }, nil)
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !errors.Is(err, relaunchErr) {
+		t.Fatalf("error = %v, want %v", err, relaunchErr)
+	}
+	if decision != "continue" {
+		t.Fatalf("decision = %s, want continue", decision)
 	}
 }
