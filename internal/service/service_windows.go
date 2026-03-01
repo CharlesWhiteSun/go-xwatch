@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"go-xwatch/internal/config"
@@ -162,18 +163,23 @@ type handler struct {
 	settings config.Settings
 }
 
+var watchLog struct {
+	mu     sync.Mutex
+	logger *slog.Logger
+	file   *os.File
+	date   string
+	err    error
+}
+
 func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
 	const accepted = svc.AcceptStop | svc.AcceptShutdown
 	changes <- svc.Status{State: svc.StartPending}
 
-	logFilePath := filepath.Join(os.Getenv("ProgramData"), "go-xwatch", "xwatch.log")
-	_ = os.MkdirAll(filepath.Dir(logFilePath), 0o755)
-	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	logger, closeLogger, err := getWatchLogger()
 	if err != nil {
 		return false, 1
 	}
-	defer logFile.Close()
-	logger := slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	defer closeLogger()
 
 	dataDir, err := paths.EnsureDataDir()
 	if err != nil {
@@ -287,4 +293,42 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 			return false, 0
 		}
 	}
+}
+
+func getWatchLogger() (*slog.Logger, func(), error) {
+	watchLog.mu.Lock()
+	defer watchLog.mu.Unlock()
+
+	now := time.Now()
+	day := now.In(time.Local).Format("2006-01-02")
+	if watchLog.logger != nil && watchLog.date == day && watchLog.err == nil {
+		return watchLog.logger, func() {}, nil
+	}
+
+	if watchLog.file != nil {
+		_ = watchLog.file.Close()
+		watchLog.file = nil
+	}
+
+	dataDir, err := paths.EnsureDataDir()
+	if err != nil {
+		watchLog.err = err
+		return nil, func() {}, err
+	}
+	logDir := filepath.Join(dataDir, "xwatch-watch-logs")
+	if mkErr := os.MkdirAll(logDir, 0o755); mkErr != nil {
+		watchLog.err = mkErr
+		return nil, func() {}, mkErr
+	}
+	logPath := filepath.Join(logDir, fmt.Sprintf("watch_%s.log", day))
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		watchLog.err = err
+		return nil, func() {}, err
+	}
+	watchLog.logger = slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	watchLog.file = f
+	watchLog.date = day
+	watchLog.err = nil
+	return watchLog.logger, func() { _ = f.Close() }, nil
 }

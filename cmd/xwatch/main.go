@@ -43,6 +43,8 @@ var opsLog struct {
 	err    error
 }
 
+var suppressEmptyHelp bool
+
 func main() {
 	if runtime.GOOS != "windows" {
 		fmt.Fprintln(os.Stderr, "this program currently supports Windows service mode only")
@@ -116,7 +118,20 @@ func main() {
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 		line = strings.TrimSpace(line)
 		if line == "" {
+			// 空白輸入時留在選單，下一輪不顯示 help
+			suppressEmptyHelp = true
+			continue
+		}
+		lower := strings.ToLower(line)
+		if lower == "e" || lower == "exit" {
+			logOp("cli exit", "code", exitCode)
+			os.Exit(exitCode)
+		} else if lower == "h" || lower == "help" {
+			fmt.Println()
+			printUsage()
 			os.Args = []string{os.Args[0]}
+			exitCode = 0
+			continue
 		} else {
 			os.Args = append([]string{os.Args[0]}, strings.Fields(line)...)
 		}
@@ -143,7 +158,7 @@ func getOpsLogger(now time.Time) (*slog.Logger, error) {
 		opsLog.err = err
 		return nil, err
 	}
-	logDir := filepath.Join(dataDir, "logs")
+	logDir := filepath.Join(dataDir, "xwatch-ops-logs")
 	if mkErr := os.MkdirAll(logDir, 0o755); mkErr != nil {
 		opsLog.err = mkErr
 		return nil, mkErr
@@ -180,6 +195,10 @@ func runInteractive() error {
 	logOp("command", "cmd", command, "args", args)
 
 	if len(os.Args) <= 1 || command == "" {
+		if suppressEmptyHelp {
+			suppressEmptyHelp = false
+			return nil
+		}
 		printUsage()
 		return nil
 	}
