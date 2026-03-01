@@ -114,6 +114,8 @@ func runInteractive() error {
 
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	rootFlag := fs.String("root", "", "watch root directory (default: exe directory)")
+	dailyCSVFlag := fs.Bool("daily-csv", false, "enable daily CSV sink")
+	dailyDirFlag := fs.String("daily-dir", "", "daily CSV output directory (default: %ProgramData%/go-xwatch/daily)")
 	sinceFlag := fs.String("since", "", "RFC3339 timestamp filter for export")
 	untilFlag := fs.String("until", "", "optional RFC3339 upper bound for export")
 	limitFlag := fs.Int("limit", 1000, "max rows for export")
@@ -128,7 +130,7 @@ func runInteractive() error {
 
 	switch command {
 	case "init":
-		if err := initAndExit(*rootFlag, *installFlag); err != nil {
+		if err := initAndExit(*rootFlag, *dailyCSVFlag, *dailyDirFlag, *installFlag); err != nil {
 			return err
 		}
 		return nil
@@ -174,14 +176,18 @@ func runInteractive() error {
 	}
 }
 
-func initAndExit(rootArg string, installService bool) error {
+func initAndExit(rootArg string, daily bool, dailyDir string, installService bool) error {
 	fmt.Println("[1/3] 準備初始化...")
 	root, err := resolveRoot(rootArg)
 	if err != nil {
 		return err
 	}
 	fmt.Println("[2/3] 寫入設定檔...")
-	if err := config.Save(config.Settings{RootDir: root}); err != nil {
+	settings := config.Settings{RootDir: root, DailyCSVEnabled: daily}
+	if dailyDir != "" {
+		settings.DailyCSVDir = dailyDir
+	}
+	if err := config.Save(settings); err != nil {
 		return err
 	}
 
@@ -222,6 +228,14 @@ func printStatus() error {
 	settings, err := config.Load()
 	if err == nil {
 		fmt.Println("root:", settings.RootDir)
+		fmt.Println("daily csv:", settings.DailyCSVEnabled)
+		if settings.DailyCSVEnabled {
+			dir := settings.DailyCSVDir
+			if dir == "" {
+				dir = filepath.Join(os.Getenv("ProgramData"), "go-xwatch", "daily")
+			}
+			fmt.Println("daily dir:", dir)
+		}
 	} else {
 		fmt.Println("root: (讀取設定失敗)")
 	}
@@ -300,7 +314,7 @@ func printUsage() {
 	fmt.Println("xwatch 可用指令：")
 	fmt.Printf("  version: %s\n", version)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "  init [-root PATH] [--install-service]\t初始化設定；加上 --install-service 會註冊並啟動服務")
+	fmt.Fprintln(w, "  init [-root PATH] [--daily-csv] [--daily-dir PATH] [--install-service]\t初始化設定；加上 --install-service 會註冊並啟動服務")
 	fmt.Fprintln(w, "  status\t顯示服務狀態、路徑與事件筆數")
 	fmt.Fprintln(w, "  start | stop\t啟動或停止服務")
 	fmt.Fprintln(w, "  uninstall\t移除服務")
@@ -344,11 +358,7 @@ func runAsService() error {
 	if settings.RootDir == "" {
 		return errors.New("empty root dir in config")
 	}
-	root, err := filepath.Abs(settings.RootDir)
-	if err != nil {
-		return err
-	}
-	return service.Run(serviceName, root)
+	return service.Run(serviceName, settings)
 }
 
 func exportJournal(sinceStr, untilStr string, limit int, format string, all, bom bool, outPath string) error {

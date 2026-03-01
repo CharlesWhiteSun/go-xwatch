@@ -10,8 +10,10 @@ import (
 )
 
 type Settings struct {
-	RootDir   string    `json:"rootDir"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	RootDir         string    `json:"rootDir"`
+	DailyCSVEnabled bool      `json:"dailyCsvEnabled"`
+	DailyCSVDir     string    `json:"dailyCsvDir"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 func Load() (Settings, error) {

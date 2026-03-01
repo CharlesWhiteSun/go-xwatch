@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"go-xwatch/internal/config"
 	"go-xwatch/internal/crypto"
 	"go-xwatch/internal/journal"
 	"go-xwatch/internal/paths"
@@ -153,12 +154,12 @@ func Status(name string) (string, error) {
 	}
 }
 
-func Run(serviceName, root string) error {
-	return svc.Run(serviceName, &handler{root: root})
+func Run(serviceName string, settings config.Settings) error {
+	return svc.Run(serviceName, &handler{settings: settings})
 }
 
 type handler struct {
-	root string
+	settings config.Settings
 }
 
 func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
@@ -177,6 +178,16 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 	dataDir, err := paths.EnsureDataDir()
 	if err != nil {
 		logger.Error("ensure data dir", "err", err)
+		return false, 1
+	}
+	root := h.settings.RootDir
+	if root == "" {
+		logger.Error("empty root dir in config")
+		return false, 1
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		logger.Error("resolve root", "err", err)
 		return false, 1
 	}
 	keyPath := filepath.Join(dataDir, "key.bin")
@@ -198,9 +209,27 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 	ctx, cancel := context.WithCancel(context.Background())
 
 	agg := pipeline.NewAggregator()
-	writer := pipeline.NewWriter(pipeline.EventSinkFunc(func(ctx context.Context, entries []journal.Entry) error {
-		return j.Append(ctx, entries)
-	}), logger, 500*time.Millisecond, 5*time.Second)
+	sinks := pipeline.MultiSink{
+		pipeline.EventSinkFunc(func(ctx context.Context, entries []journal.Entry) error {
+			return j.Append(ctx, entries)
+		}),
+	}
+	if h.settings.DailyCSVEnabled {
+		dir := h.settings.DailyCSVDir
+		if dir == "" {
+			dir = filepath.Join(dataDir, "daily")
+		} else if !filepath.IsAbs(dir) {
+			dir = filepath.Join(dataDir, dir)
+		}
+		dailySink, err := pipeline.NewDailyFileSink(dir, pipeline.NewCSVRecorder)
+		if err != nil {
+			logger.Error("create daily sink", "err", err, "dir", dir)
+		} else {
+			sinks = append(sinks, pipeline.NewBufferedSink(dailySink, 5*time.Second, 1024))
+			logger.Info("daily csv sink enabled", "dir", dir)
+		}
+	}
+	writer := pipeline.NewWriter(sinks, logger, 500*time.Millisecond, 5*time.Second)
 
 	go func() {
 		ticker := time.NewTicker(300 * time.Millisecond)
@@ -227,7 +256,7 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- watcher.Run(ctx, h.root, logger, func(ev watcher.Event) {
+		errCh <- watcher.Run(ctx, root, logger, func(ev watcher.Event) {
 			select {
 			case eventCh <- ev:
 			default:
