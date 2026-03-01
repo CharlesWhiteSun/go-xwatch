@@ -378,9 +378,12 @@ func clearJournal() error {
 }
 
 func printUsage() {
+	fmt.Println()
+	fmt.Println("  XWATCH")
+	fmt.Printf("   - version: %s\n", version)
+	fmt.Println()
 	fmt.Println("============================================================")
-	fmt.Println("xwatch 可用指令：")
-	fmt.Printf("  version: %s\n", version)
+	fmt.Println("help 指令列表:")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "  init [-root PATH] [--install-service]\t初始化設定；加上 --install-service 會註冊並啟動服務")
 	fmt.Fprintln(w, "  status\t顯示服務狀態、路徑與事件筆數")
