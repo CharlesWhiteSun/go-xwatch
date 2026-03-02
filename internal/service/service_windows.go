@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -183,30 +184,30 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 
 	dataDir, err := paths.EnsureDataDir()
 	if err != nil {
-		logger.Error("ensure data dir", "err", err)
+		logger.Error(fmt.Sprintf("無法建立資料目錄：%v", err))
 		return false, 1
 	}
 	root := h.settings.RootDir
 	if root == "" {
-		logger.Error("empty root dir in config")
+		logger.Error("設定中的 root 路徑為空")
 		return false, 1
 	}
 	root, err = filepath.Abs(root)
 	if err != nil {
-		logger.Error("resolve root", "err", err)
+		logger.Error(fmt.Sprintf("解析 root 路徑失敗：%v", err))
 		return false, 1
 	}
 	keyPath := filepath.Join(dataDir, "key.bin")
 	key, err := crypto.LoadOrCreateKey(keyPath, 32)
 	if err != nil {
-		logger.Error("load/create key", "err", err)
+		logger.Error(fmt.Sprintf("載入或建立金鑰失敗：%v", err))
 		return false, 1
 	}
 
 	journalPath := filepath.Join(dataDir, "journal.db")
 	j, err := journal.Open(journalPath, key)
 	if err != nil {
-		logger.Error("open journal", "err", err)
+		logger.Error(fmt.Sprintf("開啟事件日誌失敗：%v", err))
 		return false, 1
 	}
 	defer j.Close()
@@ -229,10 +230,10 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 		}
 		dailySink, err := pipeline.NewDailyFileSink(dir, pipeline.NewCSVRecorder)
 		if err != nil {
-			logger.Error("create daily sink", "err", err, "dir", dir)
+			logger.Error(fmt.Sprintf("建立每日 CSV 寫入器失敗（目錄：%s）：%v", dir, err))
 		} else {
 			sinks = append(sinks, pipeline.NewBufferedSink(dailySink, 5*time.Second, 1024))
-			logger.Info("daily csv sink enabled", "dir", dir)
+			logger.Info(fmt.Sprintf("已啟用每日 CSV 輸出，位置：%s", dir))
 		}
 	}
 	writer := pipeline.NewWriter(sinks, logger, 500*time.Millisecond, 5*time.Second)
@@ -266,7 +267,7 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 			select {
 			case eventCh <- ev:
 			default:
-				logger.Warn("journal channel full, dropping event", "path", ev.Path)
+				logger.Warn(fmt.Sprintf("事件通道已滿，丟棄：%s", ev.Path))
 			}
 		})
 	}()
@@ -287,7 +288,7 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 			}
 		case err := <-errCh:
 			if err != nil {
-				logger.Error("watcher stopped with error", "err", err)
+				logger.Error(fmt.Sprintf("檔案監視停止，錯誤：%v", err))
 				return false, 2
 			}
 			return false, 0
@@ -326,7 +327,19 @@ func getWatchLogger() (*slog.Logger, func(), error) {
 		watchLog.err = err
 		return nil, func() {}, err
 	}
-	watchLog.logger = slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	handler := slog.NewTextHandler(f, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			switch a.Key {
+			case slog.TimeKey:
+				a.Value = slog.StringValue(a.Value.Time().In(time.Local).Format("2006-01-02 15:04:05"))
+			case slog.LevelKey:
+				a.Value = slog.StringValue(strings.ToUpper(a.Value.String()))
+			}
+			return a
+		},
+	})
+	watchLog.logger = slog.New(handler)
 	watchLog.file = f
 	watchLog.date = day
 	watchLog.err = nil

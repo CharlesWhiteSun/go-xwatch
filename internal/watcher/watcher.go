@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"go-xwatch/internal/humanize"
+
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -47,16 +49,16 @@ func Run(ctx context.Context, root string, logger *slog.Logger, onEvent func(Eve
 	if err := addRecursive(watcher, root); err != nil {
 		return err
 	}
-	logger.Info("watcher started", "root", root)
+	logger.Info(fmt.Sprintf("監視開始，根目錄：%s", root))
 
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("watcher stopping", "reason", ctx.Err())
+			logger.Info(fmt.Sprintf("監視結束，原因：%v", ctx.Err()))
 			return nil
 		case err := <-watcher.Errors:
 			if err != nil {
-				logger.Error("watcher error", "err", err)
+				logger.Error(fmt.Sprintf("監視器錯誤：%v", err))
 			}
 		case event := <-watcher.Events:
 			if shouldIgnore(event.Name) {
@@ -67,21 +69,21 @@ func Run(ctx context.Context, root string, logger *slog.Logger, onEvent func(Eve
 				info.IsDir = fi.IsDir()
 				info.Size = fi.Size()
 			}
-			logger.Info("fs event", "op", event.Op.String(), "path", event.Name)
+			friendly := humanize.Format(humanize.Input{TS: info.TS, Op: info.Op.String(), Path: info.Path, IsDir: info.IsDir, Size: info.Size}, humanize.Options{Root: root, ShowSize: true, ShowOp: true})
+			logger.Info(friendly)
 			if onEvent != nil {
 				onEvent(info)
 			}
 			if event.Has(fsnotify.Create) {
 				if fi, statErr := os.Stat(event.Name); statErr == nil && fi.IsDir() {
 					if err := addRecursive(watcher, event.Name); err != nil {
-						logger.Error("failed to add created dir", "path", event.Name, "err", err)
+						logger.Error(fmt.Sprintf("加入新資料夾失敗：%s，錯誤：%v", event.Name, err))
 					}
 				}
 			}
 		}
 	}
 }
-
 func addRecursive(w *fsnotify.Watcher, root string) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

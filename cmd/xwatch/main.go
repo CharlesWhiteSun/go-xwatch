@@ -183,7 +183,19 @@ func getOpsLogger(now time.Time) (*slog.Logger, error) {
 		opsLog.err = err
 		return nil, err
 	}
-	opsLog.logger = slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	handler := slog.NewTextHandler(f, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			switch a.Key {
+			case slog.TimeKey:
+				a.Value = slog.StringValue(a.Value.Time().In(time.Local).Format("2006-01-02 15:04:05"))
+			case slog.LevelKey:
+				a.Value = slog.StringValue(strings.ToUpper(a.Value.String()))
+			}
+			return a
+		},
+	})
+	opsLog.logger = slog.New(handler)
 	opsLog.file = f
 	opsLog.date = day
 	opsLog.err = nil
@@ -195,7 +207,45 @@ func logOp(msg string, args ...any) {
 	if err != nil || logger == nil {
 		return
 	}
-	logger.Info(msg, args...)
+	logger.Info(formatOpsMessage(msg, args...))
+}
+
+// formatOpsMessage converts structured args into a readable Traditional Chinese line.
+func formatOpsMessage(msg string, args ...any) string {
+	kv := make(map[string]any)
+	for i := 0; i+1 < len(args); i += 2 {
+		key, ok := args[i].(string)
+		if !ok {
+			continue
+		}
+		kv[key] = args[i+1]
+	}
+
+	switch msg {
+	case "cli start":
+		return fmt.Sprintf("CLI 啟動；版本=%v；PID=%v；參數=%v", kv["version"], kv["pid"], kv["args"])
+	case "command":
+		cmd := kv["cmd"]
+		return fmt.Sprintf("收到指令：%v；參數=%v", cmd, kv["args"])
+	case "command ok":
+		return "指令已完成"
+	case "command error":
+		return fmt.Sprintf("指令失敗：%v", kv["err"])
+	case "cli exit":
+		if reason, ok := kv["reason"]; ok {
+			return fmt.Sprintf("CLI 結束；代碼=%v；原因=%v", kv["code"], reason)
+		}
+		return fmt.Sprintf("CLI 結束；代碼=%v", kv["code"])
+	case "service error":
+		return fmt.Sprintf("服務錯誤：%v", kv["err"])
+	case "cli signal":
+		return fmt.Sprintf("收到訊號：%v；即將結束", kv["signal"])
+	default:
+		if len(args) == 0 {
+			return msg
+		}
+		return fmt.Sprintf("%s；內容=%v", msg, kv)
+	}
 }
 
 func runInteractive() error {
