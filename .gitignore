@@ -1,2 +1,3 @@
 xwatch.exe
 *.log
+scripts/send-mail.config.yml

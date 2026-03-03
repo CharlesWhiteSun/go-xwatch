@@ -1,0 +1,31 @@
+# send-test-mail.ps1 設定檔範例 (優先序：命令列參數 > 環境變數 > 此檔案)
+# 支援環境變數 SMTP_HOST/PORT/USER/PASS 或 XWATCH_SMTP_HOST/PORT/USER/PASS。
+# 將此檔案複製為 send-mail.config.yml 並填入實際值。
+
+# 非 Gmail 範例：請改填貴公司 SMTP 帳密
+user: notice@mail.httc.com.tw
+appPassword: Httc24508323   # 可用 SMTP_PASS 或 XWATCH_SMTP_PASS 取代
+
+# 收件人可用逗號分隔多人
+# to: alice@httc.com.tw,bob@httc.com.tw
+to: r021@httc.com.tw
+
+# 預設為昨天 yyyy-MM-dd，可自行指定
+# day: 2026-03-02
+
+# 監控日誌目錄；預設 %ProgramData%\go-xwatch\xwatch-watch-logs
+# logDir: D:\ProgramData\go-xwatch\xwatch-watch-logs
+logDir: D:\ProgramData\go-xwatch\xwatch-watch-logs
+
+# SMTP 設定；改為公司郵件伺服器
+# host: mail.httc.com.tw
+# port: 587
+host: mail.httc.com.tw
+port: 587
+
+# 自訂主旨與內文（若未指定則自動帶入）
+# subject: XWatch 前一日監控日誌 2026-03-02
+# body: 附件為 2026-03-02 的監控日誌（來源資料夾 xwatch-watch-logs）。
+
+# 排程任務名稱（使用 -RegisterTask 時會用到）
+taskName: XWatchMailDaily

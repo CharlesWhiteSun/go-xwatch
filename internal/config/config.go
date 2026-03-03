@@ -47,7 +47,7 @@ func Save(s Settings) error {
 		return err
 	}
 	validated.UpdatedAt = time.Now().UTC()
-	bytes, err := json.MarshalIndent(s, "", "  ")
+	bytes, err := json.MarshalIndent(validated, "", "  ")
 	if err != nil {
 		return err
 	}

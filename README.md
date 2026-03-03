@@ -98,6 +98,27 @@ go build -o xwatch.exe ./cmd/xwatch
 
 目前僅支援 CSV；未來可在 `daily` 子命令擴充 `--format json|email` 等。每日輸出預設以緩衝批次寫入，目錄預設 `%ProgramData%/go-xwatch/daily`。
 
+### 測試寄送 Gmail 報表（前一日 watch log）
+
+> 需先申請 Gmail 應用程式密碼；避免把密碼寫進設定檔，可用環境變數 `XWATCH_SMTP_USER` / `XWATCH_SMTP_PASS` / `XWATCH_MAIL_TO`。
+
+```powershell
+# 範例：寄送昨天的 watch log (會自動打包為 zip 附件)
+set XWATCH_SMTP_USER=your@gmail.com
+set XWATCH_SMTP_PASS=your_app_password
+./xwatch.exe mail --to charleswhitesun@gmail.com --day 2026-03-02
+
+# 如要指定 log 目錄或自訂主旨/內文
+./xwatch.exe mail --to alice@cpc.com.tw,bob@cpc.com.tw ^
+  --log-dir "D:\\ProgramData\\go-xwatch\\xwatch-watch-logs" ^
+  --subject "XWatch 日誌 2026-03-02" ^
+  --body "附件為 2026-03-02 的監控日誌，來源 xwatch-watch-logs"
+```
+
+- 預設會取本地時區的「昨天」日誌 `watch_YYYY-MM-DD.log`，打包為 `watch-log-YYYYMMDD.zip`。
+- 預設 SMTP：`smtp.gmail.com:587`，可改 `--host` / `--port`。
+- 支援一次多收件人（逗號分隔）。
+
 ### 常用維運
 
 ```powershell
