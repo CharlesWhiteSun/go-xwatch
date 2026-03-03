@@ -11,6 +11,12 @@
 - 清理工具：`cleanup/remove` 一鍵停止並移除服務；`clear/purge/wipe` 清空事件資料庫並重建空庫。
 - 互動啟動體驗：在非服務模式偵測未以系統管理員執行時，提示是否以 UAC 重新啟動（可設 `XWATCH_NO_ELEVATE=1` 關閉）；每次指令後提供快捷選項，輸入 `h` 查看 help、`e` 退出。
 
+## 近期更新（主要功能項目）
+- 設定檔驗證與預設：`rootDir` 必填且自動正規化為絕對路徑；每日輸出啟用時，未指定路徑預設寫入 `daily`。
+- 服務/前景模式共用的 rotating logger，避免單一檔案無限成長。
+- pipeline 新增完整 lifecycle：writer/各 sink 支援 `Close()` 並在關閉時做最後 flush，避免遺失尾端事件。
+- watcher 支援注入自訂 formatter/hook，便於在不同場景覆用。
+
 ## Build
 
 ### 推薦：自動注入版本（使用 git tag）
