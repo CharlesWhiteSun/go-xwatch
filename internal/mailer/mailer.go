@@ -17,6 +17,8 @@ import (
 	"time"
 )
 
+var ErrEmptyLog = errors.New("log file is empty")
+
 // SendMailFunc 抽象 smtp.SendMail 便於測試。
 type SendMailFunc func(addr string, a smtp.Auth, from string, to []string, msg []byte) error
 
@@ -53,7 +55,12 @@ func SendGmail(ctx context.Context, cfg SMTPConfig, opts ReportOptions, sendFn S
 
 	archive, zipName, err := BuildLogArchive(opts.LogDir, opts.Day)
 	if err != nil {
-		return err
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, ErrEmptyLog) {
+			archive = nil
+			zipName = ""
+		} else {
+			return err
+		}
 	}
 
 	msg, err := BuildMIMEMessage(cfg.From, cfg.To, opts.Subject, opts.Body, zipName, archive)
@@ -138,6 +145,9 @@ func BuildLogArchive(logDir string, day time.Time) ([]byte, string, error) {
 	if stat.IsDir() {
 		return nil, "", fmt.Errorf("log path is a directory: %s", logPath)
 	}
+	if stat.Size() == 0 {
+		return nil, "", ErrEmptyLog
+	}
 
 	data, err := osReadFile(logPath)
 	if err != nil {
@@ -172,6 +182,29 @@ func BuildMIMEMessage(from string, to []string, subject string, body string, att
 	if strings.TrimSpace(subject) == "" {
 		return nil, errors.New("missing subject")
 	}
+	cleanBody := body
+
+	if len(attachment) == 0 {
+		var sb strings.Builder
+		headers := map[string]string{
+			"From":                      from,
+			"To":                        strings.Join(to, ", "),
+			"Subject":                   encodeSubject(subject),
+			"MIME-Version":              "1.0",
+			"Content-Type":              "text/plain; charset=UTF-8",
+			"Content-Transfer-Encoding": "7bit",
+		}
+		for k, v := range headers {
+			sb.WriteString(k)
+			sb.WriteString(": ")
+			sb.WriteString(v)
+			sb.WriteString("\r\n")
+		}
+		sb.WriteString("\r\n")
+		sb.WriteString(cleanBody)
+		sb.WriteString("\r\n")
+		return []byte(sb.String()), nil
+	}
 
 	boundary := randomBoundary()
 	encodedSubject := encodeSubject(subject)
@@ -197,7 +230,7 @@ func BuildMIMEMessage(from string, to []string, subject string, body string, att
 	sb.WriteString("\r\n")
 	sb.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
 	sb.WriteString("Content-Transfer-Encoding: 7bit\r\n\r\n")
-	sb.WriteString(body)
+	sb.WriteString(cleanBody)
 	sb.WriteString("\r\n\r\n")
 
 	sb.WriteString("--")
@@ -268,4 +301,5 @@ var fileStat = func(path string) (fileInfo, error) {
 // fileInfo 提供最小介面，便於替換。
 type fileInfo interface {
 	IsDir() bool
+	Size() int64
 }

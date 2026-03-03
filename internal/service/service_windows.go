@@ -190,6 +190,10 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 		runCh <- runner.Run(ctx)
 	}()
 
+	if h.settings.Mail.Enabled {
+		go runMailScheduler(ctx, logger, h.settings.Mail, time.Now)
+	}
+
 	changes <- svc.Status{State: svc.Running, Accepts: accepted}
 
 	for {

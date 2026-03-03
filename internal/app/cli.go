@@ -22,7 +22,7 @@ import (
 	"go-xwatch/internal/daily"
 	"go-xwatch/internal/exporter"
 	"go-xwatch/internal/journal"
-	"go-xwatch/internal/mailer"
+	"go-xwatch/internal/mailcmd"
 	"go-xwatch/internal/paths"
 	"go-xwatch/internal/service"
 	"go-xwatch/internal/watcher"
@@ -248,83 +248,7 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 	}})
 
 	reg.Register(cli.CommandFunc{CommandName: "mail", Fn: func(args []string) error {
-		fs := flag.NewFlagSet("mail", flag.ContinueOnError)
-		toFlag := fs.String("to", "", "以逗號分隔的收件人 (預設讀取環境變數 XWATCH_MAIL_TO)")
-		userFlag := fs.String("user", "", "SMTP 使用者 (Gmail 帳號；預設讀取環境變數 XWATCH_SMTP_USER)")
-		passFlag := fs.String("pass", "", "SMTP 密碼/應用程式密碼 (預設讀取環境變數 XWATCH_SMTP_PASS)")
-		hostFlag := fs.String("host", "smtp.gmail.com", "SMTP 主機")
-		portFlag := fs.Int("port", 587, "SMTP 連線埠")
-		logDirFlag := fs.String("log-dir", "", "watch log 目錄 (預設 %ProgramData%/go-xwatch/xwatch-watch-logs)")
-		dayFlag := fs.String("day", "", "寄送哪一天的日誌 (YYYY-MM-DD；預設昨天，本地時區)")
-		subjectFlag := fs.String("subject", "", "自訂郵件主旨 (預設自動產生)")
-		bodyFlag := fs.String("body", "", "自訂郵件內容 (預設自動產生)")
-		if err := fs.Parse(args); err != nil {
-			return err
-		}
-
-		user := firstNonEmpty(*userFlag, os.Getenv("XWATCH_SMTP_USER"))
-		pass := firstNonEmpty(*passFlag, os.Getenv("XWATCH_SMTP_PASS"))
-
-		recipients := splitList(*toFlag)
-		if len(recipients) == 0 {
-			recipients = splitList(os.Getenv("XWATCH_MAIL_TO"))
-		}
-		if len(recipients) == 0 {
-			return errors.New("請提供收件人 (--to 或環境變數 XWATCH_MAIL_TO)")
-		}
-		if user == "" || pass == "" {
-			return errors.New("請提供 Gmail 帳號與應用程式密碼 (--user/--pass 或環境變數 XWATCH_SMTP_USER/XWATCH_SMTP_PASS)")
-		}
-
-		dataDir, err := paths.EnsureDataDir()
-		if err != nil {
-			return err
-		}
-		logDir := *logDirFlag
-		if strings.TrimSpace(logDir) == "" {
-			logDir = filepath.Join(dataDir, "xwatch-watch-logs")
-		} else if !filepath.IsAbs(logDir) {
-			absDir, err := filepath.Abs(logDir)
-			if err != nil {
-				return err
-			}
-			logDir = absDir
-		}
-
-		day := time.Now().In(time.Local).AddDate(0, 0, -1)
-		if d := strings.TrimSpace(*dayFlag); d != "" {
-			parsed, err := time.ParseInLocation("2006-01-02", d, time.Local)
-			if err != nil {
-				return fmt.Errorf("day 需為 YYYY-MM-DD，本地時區: %w", err)
-			}
-			day = parsed
-		}
-		dayStr := day.Format("2006-01-02")
-
-		subject := strings.TrimSpace(*subjectFlag)
-		if subject == "" {
-			subject = fmt.Sprintf("XWatch 前一日監控日誌 %s", dayStr)
-		}
-		body := strings.TrimSpace(*bodyFlag)
-		if body == "" {
-			body = fmt.Sprintf("附件為 %s 的監控日誌（來源資料夾 xwatch-watch-logs）。", dayStr)
-		}
-
-		cfg := mailer.SMTPConfig{
-			Host:     strings.TrimSpace(*hostFlag),
-			Port:     *portFlag,
-			Username: user,
-			Password: pass,
-			From:     user,
-			To:       recipients,
-		}
-		opts := mailer.ReportOptions{
-			LogDir:  logDir,
-			Day:     day,
-			Subject: subject,
-			Body:    body,
-		}
-		return mailer.SendGmail(context.Background(), cfg, opts, nil)
+		return mailcmd.Run(args)
 	}})
 
 	reg.Register(cli.CommandFunc{CommandName: "run", Fn: func(args []string) error {
@@ -494,6 +418,7 @@ func (c *cliApp) printUsage() {
 	fmt.Fprintln(w, "    --bom\t輸出 UTF-8 BOM 以供記事本辨識中文")
 	fmt.Fprintln(w, "    --out PATH\t輸出檔路徑，'-' 為 stdout，預設 %ProgramData%/go-xwatch")
 	fmt.Fprintln(w, "  daily <subcommand> [flags]\t管理每日輸出 (csv/json/email 等)")
+	fmt.Fprintln(w, "  mail <subcommand> [flags]\t管理郵件寄送 (status/enable/disable/set/send)")
 	fmt.Fprintln(w, "  run [-root PATH]\t前景模式執行，不作為服務")
 	_ = w.Flush()
 	fmt.Println("============================================================")
@@ -587,32 +512,6 @@ func promptNextAction() (string, string) {
 		}
 		return "command", line
 	}
-}
-
-func splitList(value string) []string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return nil
-	}
-	parts := strings.Split(trimmed, ",")
-	var out []string
-	for _, p := range parts {
-		v := strings.TrimSpace(p)
-		if v != "" {
-			out = append(out, v)
-		}
-	}
-	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		trimmed := strings.TrimSpace(v)
-		if trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 func resolveAndEnsureDir(path string, purpose string) (string, error) {

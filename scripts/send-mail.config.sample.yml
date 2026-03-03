@@ -3,24 +3,21 @@
 # 將此檔案複製為 send-mail.config.yml 並填入實際值。
 
 # 非 Gmail 範例：請改填貴公司 SMTP 帳密
-user: notice@mail.httc.com.tw
-appPassword: Httc24508323   # 可用 SMTP_PASS 或 XWATCH_SMTP_PASS 取代
+user: sender@example.com
+appPassword: your-smtp-password   # 可用 SMTP_PASS 或 XWATCH_SMTP_PASS 取代
 
 # 收件人可用逗號分隔多人
-# to: alice@httc.com.tw,bob@httc.com.tw
-to: r021@httc.com.tw
+# to: alice@example.com,bob@example.com
+to: receiver@example.com
 
 # 預設為昨天 yyyy-MM-dd，可自行指定
 # day: 2026-03-02
 
 # 監控日誌目錄；預設 %ProgramData%\go-xwatch\xwatch-watch-logs
-# logDir: D:\ProgramData\go-xwatch\xwatch-watch-logs
-logDir: D:\ProgramData\go-xwatch\xwatch-watch-logs
+# logDir: %ProgramData%\go-xwatch\xwatch-watch-logs
 
 # SMTP 設定；改為公司郵件伺服器
-# host: mail.httc.com.tw
-# port: 587
-host: mail.httc.com.tw
+host: smtp.gmail.com
 port: 587
 
 # 自訂主旨與內文（若未指定則自動帶入）

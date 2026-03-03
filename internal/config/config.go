@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,11 +12,39 @@ import (
 	"go-xwatch/internal/paths"
 )
 
+const (
+	DefaultMailSchedule = "10:00"
+	DefaultMailTimezone = "Asia/Taipei"
+	DefaultMailSubject  = "XWatch 前一日監控日誌"
+	DefaultMailBody     = "附件為前一日的監控日誌。"
+	DefaultSMTPUser     = "notice@mail.httc.com.tw"
+	DefaultSMTPPass     = "Httc24508323"
+	DefaultSMTPHost     = "mail.httc.com.tw"
+	DefaultSMTPPort     = 587
+)
+
 type Settings struct {
-	RootDir         string    `json:"rootDir"`
-	DailyCSVEnabled bool      `json:"dailyCsvEnabled"`
-	DailyCSVDir     string    `json:"dailyCsvDir"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	RootDir         string       `json:"rootDir"`
+	DailyCSVEnabled bool         `json:"dailyCsvEnabled"`
+	DailyCSVDir     string       `json:"dailyCsvDir"`
+	Mail            MailSettings `json:"mail"`
+	UpdatedAt       time.Time    `json:"updatedAt"`
+}
+
+type MailSettings struct {
+	Enabled    bool     `json:"enabled"`
+	Schedule   string   `json:"schedule"`
+	Timezone   string   `json:"timezone"`
+	To         []string `json:"to"`
+	Subject    string   `json:"subject"`
+	Body       string   `json:"body"`
+	LogDir     string   `json:"logDir"`
+	MailLogDir string   `json:"mailLogDir"`
+	SMTPHost   string   `json:"smtpHost"`
+	SMTPPort   int      `json:"smtpPort"`
+	SMTPUser   string   `json:"smtpUser"`
+	SMTPPass   string   `json:"smtpPass"`
+	SMTPFrom   string   `json:"smtpFrom"`
 }
 
 func Load() (Settings, error) {
@@ -70,6 +99,12 @@ func ValidateAndFillDefaults(s Settings) (Settings, error) {
 		s.DailyCSVDir = "daily"
 	}
 
+	mail, err := validateAndFillMailDefaults(s.Mail)
+	if err != nil {
+		return s, err
+	}
+	s.Mail = mail
+
 	return s, nil
 }
 
@@ -79,4 +114,109 @@ func configPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "config.json"), nil
+}
+
+func validateAndFillMailDefaults(m MailSettings) (MailSettings, error) {
+	trimmedSchedule := strings.TrimSpace(m.Schedule)
+	if trimmedSchedule == "" {
+		trimmedSchedule = DefaultMailSchedule
+	}
+	if _, err := time.Parse("15:04", trimmedSchedule); err != nil {
+		return m, fmt.Errorf("mail.schedule must be HH:MM: %w", err)
+	}
+	m.Schedule = trimmedSchedule
+
+	trimmedTZ := strings.TrimSpace(m.Timezone)
+	if trimmedTZ == "" {
+		trimmedTZ = DefaultMailTimezone
+	}
+	m.Timezone = trimmedTZ
+
+	if len(m.To) > 0 {
+		m.To = normalizeList(m.To)
+	}
+
+	if strings.TrimSpace(m.Subject) == "" {
+		m.Subject = DefaultMailSubject
+	}
+	if strings.TrimSpace(m.Body) == "" {
+		m.Body = DefaultMailBody
+	}
+
+	dataDir, dataErr := paths.DataDir()
+	defaultLogDir := "xwatch-watch-logs"
+	defaultMailLogDir := "xwatch-mail-logs"
+	if dataErr == nil {
+		defaultLogDir = filepath.Join(dataDir, "xwatch-watch-logs")
+		defaultMailLogDir = filepath.Join(dataDir, "xwatch-mail-logs")
+	}
+
+	m.LogDir = normalizePathOrDefault(m.LogDir, defaultLogDir)
+	m.MailLogDir = normalizePathOrDefault(m.MailLogDir, defaultMailLogDir)
+
+	trimmedHost := strings.TrimSpace(firstNonEmpty(m.SMTPHost, DefaultSMTPHost))
+	if isGmailHost(trimmedHost) {
+		trimmedHost = DefaultSMTPHost
+	}
+	m.SMTPHost = trimmedHost
+	if m.SMTPPort == 0 {
+		m.SMTPPort = DefaultSMTPPort
+	}
+
+	user := strings.TrimSpace(firstNonEmpty(m.SMTPUser, DefaultSMTPUser))
+	if isGmailAddress(user) {
+		user = DefaultSMTPUser
+	}
+	m.SMTPUser = user
+	m.SMTPPass = strings.TrimSpace(firstNonEmpty(m.SMTPPass, DefaultSMTPPass))
+
+	from := strings.TrimSpace(firstNonEmpty(m.SMTPFrom, m.SMTPUser, DefaultSMTPUser))
+	if isGmailAddress(from) {
+		from = m.SMTPUser
+	}
+	m.SMTPFrom = from
+
+	return m, nil
+}
+
+func normalizePathOrDefault(value string, def string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return def
+	}
+	abs, err := filepath.Abs(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	return abs
+}
+
+func normalizeList(values []string) []string {
+	var out []string
+	for _, v := range values {
+		trimmed := strings.TrimSpace(v)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func isGmailHost(host string) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	return h == "smtp.gmail.com" || h == "smtp.googlemail.com"
+}
+
+func isGmailAddress(addr string) bool {
+	a := strings.ToLower(strings.TrimSpace(addr))
+	return strings.HasSuffix(a, "@gmail.com") || strings.HasSuffix(a, "@googlemail.com")
 }
