@@ -2,8 +2,10 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"go-xwatch/internal/paths"
@@ -29,7 +31,7 @@ func Load() (Settings, error) {
 	if err := json.Unmarshal(bytes, &s); err != nil {
 		return Settings{}, err
 	}
-	return s, nil
+	return ValidateAndFillDefaults(s)
 }
 
 func Save(s Settings) error {
@@ -40,12 +42,35 @@ func Save(s Settings) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	s.UpdatedAt = time.Now().UTC()
+	validated, err := ValidateAndFillDefaults(s)
+	if err != nil {
+		return err
+	}
+	validated.UpdatedAt = time.Now().UTC()
 	bytes, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(path, bytes, 0o644)
+}
+
+// ValidateAndFillDefaults trims/normalizes settings and returns filled defaults.
+func ValidateAndFillDefaults(s Settings) (Settings, error) {
+	trimmedRoot := strings.TrimSpace(s.RootDir)
+	if trimmedRoot == "" {
+		return s, errors.New("rootDir is required")
+	}
+	absRoot, err := filepath.Abs(trimmedRoot)
+	if err != nil {
+		return s, err
+	}
+	s.RootDir = absRoot
+
+	if s.DailyCSVEnabled && strings.TrimSpace(s.DailyCSVDir) == "" {
+		s.DailyCSVDir = "daily"
+	}
+
+	return s, nil
 }
 
 func configPath() (string, error) {
