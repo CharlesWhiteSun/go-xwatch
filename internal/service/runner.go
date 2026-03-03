@@ -84,8 +84,15 @@ func (r *Runner) Run(ctx context.Context) error {
 			case <-ticker.C:
 				flush(nowFn())
 			case <-ctx.Done():
-				flush(nowFn())
-				return
+				for {
+					select {
+					case ev := <-eventCh:
+						agg.Add(ev)
+					default:
+						flush(nowFn())
+						return
+					}
+				}
 			}
 		}
 	}()

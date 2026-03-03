@@ -6,11 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"go-xwatch/internal/config"
@@ -175,19 +171,13 @@ type handler struct {
 	settings config.Settings
 }
 
-var watchLog struct {
-	mu     sync.Mutex
-	logger *slog.Logger
-	file   *os.File
-	date   string
-	err    error
-}
+var watchLogRotator = NewRotatingLogger("watch", "xwatch-watch-logs", paths.EnsureDataDir, watcher.NewLogger)
 
 func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
 	const accepted = svc.AcceptStop | svc.AcceptShutdown
 	changes <- svc.Status{State: svc.StartPending}
 
-	logger, closeLogger, err := getWatchLogger()
+	logger, closeLogger, err := watchLogRotator.Logger()
 	if err != nil {
 		return false, 1
 	}
@@ -227,42 +217,4 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 			return false, 0
 		}
 	}
-}
-
-func getWatchLogger() (*slog.Logger, func(), error) {
-	watchLog.mu.Lock()
-	defer watchLog.mu.Unlock()
-
-	now := time.Now()
-	day := now.In(time.Local).Format("2006-01-02")
-	if watchLog.logger != nil && watchLog.date == day && watchLog.err == nil {
-		return watchLog.logger, func() {}, nil
-	}
-
-	if watchLog.file != nil {
-		_ = watchLog.file.Close()
-		watchLog.file = nil
-	}
-
-	dataDir, err := paths.EnsureDataDir()
-	if err != nil {
-		watchLog.err = err
-		return nil, func() {}, err
-	}
-	logDir := filepath.Join(dataDir, "xwatch-watch-logs")
-	if mkErr := os.MkdirAll(logDir, 0o755); mkErr != nil {
-		watchLog.err = mkErr
-		return nil, func() {}, mkErr
-	}
-	logPath := filepath.Join(logDir, fmt.Sprintf("watch_%s.log", day))
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		watchLog.err = err
-		return nil, func() {}, err
-	}
-	watchLog.logger = watcher.NewLogger(f)
-	watchLog.file = f
-	watchLog.date = day
-	watchLog.err = nil
-	return watchLog.logger, func() { _ = f.Close() }, nil
 }
