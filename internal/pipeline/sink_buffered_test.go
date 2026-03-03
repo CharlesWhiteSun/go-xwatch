@@ -24,6 +24,8 @@ func (r *recordingSink) Handle(_ context.Context, entries []journal.Entry) error
 	return nil
 }
 
+func (r *recordingSink) Close(context.Context) error { return nil }
+
 func TestBufferedSinkFlushByBatch(t *testing.T) {
 	rec := &recordingSink{}
 	sink := NewBufferedSink(rec, time.Second, 2)
@@ -65,5 +67,22 @@ func TestBufferedSinkRetriesOnError(t *testing.T) {
 	}
 	if len(rec.batches) != 1 || len(rec.batches[0]) != 2 {
 		t.Fatalf("expected buffered entries to flush after retry, got %+v", rec.batches)
+	}
+}
+
+func TestBufferedSinkCloseFlushes(t *testing.T) {
+	rec := &recordingSink{}
+	sink := NewBufferedSink(rec, time.Second, 10)
+	if err := sink.Handle(context.Background(), []journal.Entry{{Op: "a"}, {Op: "b"}}); err != nil {
+		t.Fatalf("handle err: %v", err)
+	}
+	if len(rec.batches) != 0 {
+		t.Fatalf("expected no flush before close")
+	}
+	if err := sink.Close(context.Background()); err != nil {
+		t.Fatalf("close err: %v", err)
+	}
+	if len(rec.batches) != 1 || len(rec.batches[0]) != 2 {
+		t.Fatalf("expected buffered flush on close, got %+v", rec.batches)
 	}
 }

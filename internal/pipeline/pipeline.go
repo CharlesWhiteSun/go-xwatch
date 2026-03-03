@@ -48,6 +48,12 @@ type EventSink interface {
 	Handle(ctx context.Context, entries []journal.Entry) error
 }
 
+// ClosableSink 可在退出前 flush/釋放資源。
+type ClosableSink interface {
+	EventSink
+	Close(ctx context.Context) error
+}
+
 // EventSinkFunc allows using a func as EventSink.
 type EventSinkFunc func(ctx context.Context, entries []journal.Entry) error
 
@@ -126,4 +132,15 @@ func (w *Writer) Flush(ctx context.Context, now time.Time) {
 	w.pending = w.pending[:0]
 	w.backoff = 0
 	w.nextTry = time.Time{}
+}
+
+// Close flushes pending entries and calls sink.Close if supported.
+func (w *Writer) Close(ctx context.Context) error {
+	if len(w.pending) > 0 {
+		w.Flush(ctx, time.Now())
+	}
+	if cs, ok := w.sink.(ClosableSink); ok {
+		return cs.Close(ctx)
+	}
+	return nil
 }

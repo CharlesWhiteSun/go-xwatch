@@ -70,3 +70,16 @@ func (b *BufferedSink) Handle(ctx context.Context, entries []journal.Entry) erro
 
 	return nil
 }
+
+// Close flushes remaining buffered entries.
+func (b *BufferedSink) Close(ctx context.Context) error {
+	b.mu.Lock()
+	pending := append([]journal.Entry(nil), b.buf...)
+	b.buf = b.buf[:0]
+	b.firstAt = time.Time{}
+	b.mu.Unlock()
+	if len(pending) == 0 {
+		return nil
+	}
+	return b.sink.Handle(ctx, pending)
+}

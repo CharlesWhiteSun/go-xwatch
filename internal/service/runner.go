@@ -111,10 +111,12 @@ func (r *Runner) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		<-aggDone
+		_ = writer.Close(context.Background())
 		return nil
 	case err := <-errCh:
 		cancel()
 		<-aggDone
+		_ = writer.Close(context.Background())
 		if err != nil {
 			logger.Error(fmt.Sprintf("檔案監視停止，錯誤：%v", err))
 		}

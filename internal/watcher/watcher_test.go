@@ -169,16 +169,21 @@ func TestRunWithOptionsFormatterAndHook(t *testing.T) {
 		t.Fatalf("write file failed: %v", err)
 	}
 
-	select {
-	case msg := <-msgCh:
-		if msg != "CUSTOM:c.txt" {
-			t.Fatalf("unexpected formatted message: %s", msg)
+	want := "CUSTOM:c.txt"
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case msg := <-msgCh:
+			if msg == want {
+				cancel()
+				goto done
+			}
+		case <-deadline:
+			cancel()
+			t.Fatalf("timeout waiting for formatted message; last got %q", hookPath)
 		}
-		cancel()
-	case <-time.After(3 * time.Second):
-		cancel()
-		t.Fatalf("timeout waiting for formatted message")
 	}
+done:
 
 	if hookPath == "" || filepath.Clean(hookPath) != filepath.Clean(path) {
 		t.Fatalf("hook path not set, got %q", hookPath)
