@@ -14,10 +14,7 @@ import (
 	"time"
 
 	"go-xwatch/internal/config"
-	"go-xwatch/internal/crypto"
-	"go-xwatch/internal/journal"
 	"go-xwatch/internal/paths"
-	"go-xwatch/internal/pipeline"
 	"go-xwatch/internal/watcher"
 
 	"golang.org/x/sys/windows/svc"
@@ -196,94 +193,11 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 	}
 	defer closeLogger()
 
-	dataDir, err := paths.EnsureDataDir()
-	if err != nil {
-		logger.Error(fmt.Sprintf("無法建立資料目錄：%v", err))
-		return false, 1
-	}
-	root := h.settings.RootDir
-	if root == "" {
-		logger.Error("設定中的 root 路徑為空")
-		return false, 1
-	}
-	root, err = filepath.Abs(root)
-	if err != nil {
-		logger.Error(fmt.Sprintf("解析 root 路徑失敗：%v", err))
-		return false, 1
-	}
-	keyPath := filepath.Join(dataDir, "key.bin")
-	key, err := crypto.LoadOrCreateKey(keyPath, 32)
-	if err != nil {
-		logger.Error(fmt.Sprintf("載入或建立金鑰失敗：%v", err))
-		return false, 1
-	}
-
-	journalPath := filepath.Join(dataDir, "journal.db")
-	j, err := journal.Open(journalPath, key)
-	if err != nil {
-		logger.Error(fmt.Sprintf("開啟事件日誌失敗：%v", err))
-		return false, 1
-	}
-	defer j.Close()
-
-	eventCh := make(chan watcher.Event, 256)
 	ctx, cancel := context.WithCancel(context.Background())
-
-	agg := pipeline.NewAggregator()
-	sinks := pipeline.MultiSink{
-		pipeline.EventSinkFunc(func(ctx context.Context, entries []journal.Entry) error {
-			return j.Append(ctx, entries)
-		}),
-	}
-	if h.settings.DailyCSVEnabled {
-		dir := h.settings.DailyCSVDir
-		if dir == "" {
-			dir = filepath.Join(dataDir, "daily")
-		} else if !filepath.IsAbs(dir) {
-			dir = filepath.Join(dataDir, dir)
-		}
-		dailySink, err := pipeline.NewDailyFileSink(dir, pipeline.NewCSVRecorder)
-		if err != nil {
-			logger.Error(fmt.Sprintf("建立每日 CSV 寫入器失敗（目錄：%s）：%v", dir, err))
-		} else {
-			sinks = append(sinks, pipeline.NewBufferedSink(dailySink, 5*time.Second, 1024))
-			logger.Info(fmt.Sprintf("已啟用每日 CSV 輸出，位置：%s", dir))
-		}
-	}
-	writer := pipeline.NewWriter(sinks, logger, 500*time.Millisecond, 5*time.Second)
-
+	runner := &Runner{Settings: h.settings, Logger: logger}
+	runCh := make(chan error, 1)
 	go func() {
-		ticker := time.NewTicker(300 * time.Millisecond)
-		defer ticker.Stop()
-		flush := func(now time.Time) {
-			entries := agg.Flush()
-			if len(entries) > 0 {
-				writer.Enqueue(entries)
-			}
-			writer.Flush(context.Background(), now)
-		}
-		for {
-			select {
-			case ev := <-eventCh:
-				agg.Add(ev)
-			case <-ticker.C:
-				flush(time.Now())
-			case <-ctx.Done():
-				flush(time.Now())
-				return
-			}
-		}
-	}()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- watcher.Run(ctx, root, logger, func(ev watcher.Event) {
-			select {
-			case eventCh <- ev:
-			default:
-				logger.Warn(fmt.Sprintf("事件通道已滿，丟棄：%s", ev.Path))
-			}
-		})
+		runCh <- runner.Run(ctx)
 	}()
 
 	changes <- svc.Status{State: svc.Running, Accepts: accepted}
@@ -297,10 +211,15 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 			case svc.Stop, svc.Shutdown:
 				changes <- svc.Status{State: svc.StopPending}
 				cancel()
+				err := <-runCh
+				if err != nil {
+					logger.Error(fmt.Sprintf("檔案監視停止，錯誤：%v", err))
+					return false, 2
+				}
 				return false, 0
 			default:
 			}
-		case err := <-errCh:
+		case err := <-runCh:
 			if err != nil {
 				logger.Error(fmt.Sprintf("檔案監視停止，錯誤：%v", err))
 				return false, 2
