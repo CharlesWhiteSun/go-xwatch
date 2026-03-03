@@ -24,15 +24,20 @@ type Options struct {
 	TimeFormat string // defaults to 2006-01-02 15:04:05
 	ShowSize   bool   // include size for files when >0
 	ShowOp     bool   // append the raw op code for debugging
+	HideTime   bool   // hide timestamp prefix (default false)
 }
 
 // Format returns a Traditional Chinese, human-readable sentence for an event.
 func Format(in Input, opt Options) string {
 	tf := opt.TimeFormat
 	if tf == "" {
-		tf = "2006-01-02 15:04:05"
+		tf = "2006-01-02 15:04:05.000"
 	}
-	tsText := in.TS.In(time.Local).Format(tf)
+	loc := time.FixedZone("UTC+8", 8*3600)
+	tsText := in.TS.In(loc).Format(tf)
+	if opt.HideTime {
+		tsText = ""
+	}
 
 	verb := describeOp(in.Op, in.IsDir)
 	pathText := displayPath(in.Path, opt.Root)
@@ -46,7 +51,10 @@ func Format(in Input, opt Options) string {
 	if opt.ShowOp && strings.TrimSpace(in.Op) != "" {
 		opRaw = fmt.Sprintf("（%s）", strings.ToUpper(strings.TrimSpace(in.Op)))
 	}
-	return fmt.Sprintf("%s %s%s：%s%s", tsText, verb, opRaw, pathText, sizeText)
+	if tsText != "" {
+		return fmt.Sprintf("%s %s%s：%s%s", tsText, verb, opRaw, pathText, sizeText)
+	}
+	return fmt.Sprintf("%s%s：%s%s", verb, opRaw, pathText, sizeText)
 }
 
 // FormatJournalEntry is a convenience wrapper for journal entries.

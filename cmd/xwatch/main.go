@@ -260,8 +260,8 @@ func buildCommandRegistry() *cli.Registry {
 		if err != nil {
 			return err
 		}
-		logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-		logger.Info("running in console mode", "root", root)
+		logger := watcher.NewLogger(os.Stdout)
+		logger.Info("前景模式啟動", slog.String("根目錄", root))
 		return watcher.Run(nil, root, logger, nil)
 	}})
 

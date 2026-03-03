@@ -12,7 +12,7 @@ func TestFormatJournalEntry(t *testing.T) {
 	e := journal.Entry{TS: ts, Op: "CREATE", Path: `C:\\data\\report.txt`, IsDir: false, Size: 2048}
 
 	got := FormatJournalEntry(e, Options{Root: `C:\\data`, ShowSize: true, ShowOp: true})
-	want := "2026-03-02 10:04:05 新增檔案（CREATE）：report.txt，大小 2.0 KB"
+	want := "2026-03-02 10:04:05.000 新增檔案（CREATE）：report.txt，大小 2.0 KB"
 
 	if got != want {
 		t.Fatalf("unexpected format:\n got: %q\nwant: %q", got, want)

@@ -26,7 +26,7 @@ type Event struct {
 
 func Run(ctx context.Context, root string, logger *slog.Logger, onEvent func(Event)) error {
 	if logger == nil {
-		logger = slog.Default()
+		logger = NewLogger(os.Stdout)
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -69,8 +69,8 @@ func Run(ctx context.Context, root string, logger *slog.Logger, onEvent func(Eve
 				info.IsDir = fi.IsDir()
 				info.Size = fi.Size()
 			}
-			friendly := humanize.Format(humanize.Input{TS: info.TS, Op: info.Op.String(), Path: info.Path, IsDir: info.IsDir, Size: info.Size}, humanize.Options{Root: root, ShowSize: true, ShowOp: true})
-			logger.Info(friendly, "path", info.Path, "op", info.Op.String())
+			friendly := humanize.Format(humanize.Input{TS: info.TS, Op: info.Op.String(), Path: info.Path, IsDir: info.IsDir, Size: info.Size}, humanize.Options{Root: root, ShowSize: true, ShowOp: true, HideTime: true})
+			logger.Info(friendly, slog.String("路徑", info.Path), slog.String("動作", info.Op.String()))
 			if onEvent != nil {
 				onEvent(info)
 			}

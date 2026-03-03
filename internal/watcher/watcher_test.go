@@ -19,7 +19,8 @@ func (h *channelHandler) Enabled(context.Context, slog.Level) bool { return true
 func (h *channelHandler) Handle(_ context.Context, rec slog.Record) error {
 	var path string
 	rec.Attrs(func(a slog.Attr) bool {
-		if a.Key == "path" {
+		switch a.Key {
+		case "path", "路徑":
 			path = fmt.Sprint(a.Value)
 		}
 		return true

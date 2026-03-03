@@ -341,19 +341,7 @@ func getWatchLogger() (*slog.Logger, func(), error) {
 		watchLog.err = err
 		return nil, func() {}, err
 	}
-	handler := slog.NewTextHandler(f, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
-			switch a.Key {
-			case slog.TimeKey:
-				a.Value = slog.StringValue(a.Value.Time().In(time.Local).Format("2006-01-02 15:04:05"))
-			case slog.LevelKey:
-				a.Value = slog.StringValue(strings.ToUpper(a.Value.String()))
-			}
-			return a
-		},
-	})
-	watchLog.logger = slog.New(handler)
+	watchLog.logger = watcher.NewLogger(f)
 	watchLog.file = f
 	watchLog.date = day
 	watchLog.err = nil

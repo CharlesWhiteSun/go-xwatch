@@ -49,6 +49,10 @@ func TestLoggerWritesDailyFileAndRotates(t *testing.T) {
 	path2 := filepath.Join(tmp, "xwatch-ops-logs", "operations_2024-01-03.log")
 
 	checkFileContains(t, path1, "指令已完成")
+	checkFileContains(t, path1, "時間=")
+	checkFileContains(t, path1, "層級=")
+	checkFileContains(t, path1, "訊息=")
+	checkFileContains(t, path1, "|")
 	checkFileContains(t, path2, "CLI 結束；代碼=0")
 }
 
