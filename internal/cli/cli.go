@@ -6,19 +6,14 @@ type Command interface {
 	Run(args []string) error
 }
 
-// CommandFunc adapts a function to Command. Fields are exported so other packages can construct it.
+// CommandFunc adapts a function to Command.
 type CommandFunc struct {
-	NameStr string
-	Fn      func(args []string) error
+	CommandName string
+	Fn          func(args []string) error
 }
 
-func (c CommandFunc) Name() string { return c.NameStr }
-func (c CommandFunc) Run(args []string) error {
-	if c.Fn == nil {
-		return nil
-	}
-	return c.Fn(args)
-}
+func (c CommandFunc) Name() string            { return c.CommandName }
+func (c CommandFunc) Run(args []string) error { return c.Fn(args) }
 
 // Registry stores command mappings.
 type Registry struct {

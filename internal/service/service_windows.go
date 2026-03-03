@@ -40,13 +40,18 @@ func InstallOrUpdate(name, exePath string, args ...string) error {
 
 	s, err := m.OpenService(name)
 	if err == nil {
-		s.Close()
-		if stopErr := Stop(name); stopErr != nil {
-			_ = stopErr
+		defer s.Close()
+		_ = Stop(name)
+		cfg, cfgErr := s.Config()
+		if cfgErr != nil {
+			return fmt.Errorf("read service config failed: %w", cfgErr)
 		}
-		if uninstallErr := Uninstall(name); uninstallErr != nil {
-			return uninstallErr
-		}
+		cfg.DisplayName = "Go XWatch Service"
+		cfg.Description = "Watch filesystem changes under configured root directory"
+		cfg.StartType = mgr.StartAutomatic
+		cfg.DelayedAutoStart = true
+		cfg.BinaryPathName = formatBinaryPath(exePath, args)
+		return s.UpdateConfig(cfg)
 	}
 
 	config := mgr.Config{
@@ -54,6 +59,7 @@ func InstallOrUpdate(name, exePath string, args ...string) error {
 		Description:      "Watch filesystem changes under configured root directory",
 		StartType:        mgr.StartAutomatic,
 		DelayedAutoStart: true,
+		BinaryPathName:   formatBinaryPath(exePath, args),
 	}
 	s, err = m.CreateService(name, exePath, config, args...)
 	if err != nil {
@@ -61,6 +67,14 @@ func InstallOrUpdate(name, exePath string, args ...string) error {
 	}
 	defer s.Close()
 	return nil
+}
+
+func formatBinaryPath(exePath string, args []string) string {
+	quoted := fmt.Sprintf("\"%s\"", exePath)
+	if len(args) == 0 {
+		return quoted
+	}
+	return quoted + " " + strings.Join(args, " ")
 }
 
 func Start(name string) error {

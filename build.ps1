@@ -10,5 +10,9 @@ if (-not $ver) { $ver = "dev" }
 Write-Host "Building xwatch.exe (version $ver)..."
 
 go build -ldflags "-X main.version=$ver" -o xwatch.exe ./cmd/xwatch
+if ($LASTEXITCODE -ne 0) {
+	Write-Error "Build failed with exit code $LASTEXITCODE"
+	exit $LASTEXITCODE
+}
 
-Write-Host "Done. Output: xwatch.exe"
+Write-Host "Build succeeded. Output: xwatch.exe"

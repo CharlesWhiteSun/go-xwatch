@@ -5,7 +5,7 @@ import "testing"
 func TestRegistryRegisterAndGet(t *testing.T) {
 	reg := NewRegistry()
 	called := false
-	reg.Register(CommandFunc{NameStr: "hello", Fn: func(args []string) error {
+	reg.Register(CommandFunc{CommandName: "hello", Fn: func(args []string) error {
 		called = true
 		if len(args) != 2 || args[0] != "a" || args[1] != "b" {
 			t.Fatalf("unexpected args: %#v", args)
@@ -26,7 +26,7 @@ func TestRegistryRegisterAndGet(t *testing.T) {
 }
 
 func TestRegistryNames(t *testing.T) {
-	reg := NewRegistry(CommandFunc{NameStr: "a", Fn: func([]string) error { return nil }}, CommandFunc{NameStr: "b", Fn: func([]string) error { return nil }})
+	reg := NewRegistry(CommandFunc{CommandName: "a", Fn: func([]string) error { return nil }}, CommandFunc{CommandName: "b", Fn: func([]string) error { return nil }})
 	names := reg.Names()
 	if len(names) != 2 {
 		t.Fatalf("unexpected names length: %d", len(names))
