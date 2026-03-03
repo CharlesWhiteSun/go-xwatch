@@ -208,15 +208,13 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 	defer closeLogger()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	// Runner.Run 內部的 runMailSchedulerManager 負責郵件排程熱重載，
+	// 不需在此額外啟動 runMailScheduler（避免靜態快照問題）。
 	runner := &Runner{Settings: h.settings, Logger: logger}
 	runCh := make(chan error, 1)
 	go func() {
 		runCh <- runner.Run(ctx)
 	}()
-
-	if h.settings.Mail.Enabled {
-		go runMailScheduler(ctx, logger, h.settings.Mail, time.Now)
-	}
 
 	changes <- svc.Status{State: svc.Running, Accepts: accepted}
 

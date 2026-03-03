@@ -380,3 +380,289 @@ func TestServiceAccount_UnknownService(t *testing.T) {
 		t.Fatal("expected error for non-existent service; got nil")
 	}
 }
+
+// ── Mail 熱重載測試 ────────────────────────────────────────────────
+
+// TestRunnerMail_InitiallyEnabled 確認服務啟動時 mail.Enabled=true，
+// MailSchedulerFn 立即被呼叫一次。
+func TestRunnerMail_InitiallyEnabled(t *testing.T) {
+	tmp := t.TempDir()
+	var mu sync.Mutex
+	callCount := 0
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir: tmp,
+			Mail: config.MailSettings{
+				Enabled:  true,
+				Schedule: "00:00",
+				To:       []string{"test@example.com"},
+			},
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			select {
+			case <-time.After(50 * time.Millisecond):
+			case <-ctx.Done():
+			}
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+			mu.Lock()
+			callCount++
+			mu.Unlock()
+			<-ctx.Done()
+		},
+		MailReloadInterval: 20 * time.Millisecond,
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner error: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if callCount == 0 {
+		t.Fatal("MailSchedulerFn 應在 mail.Enabled=true 時被立即呼叫")
+	}
+}
+
+// TestRunnerMail_InitiallyDisabled 確認服務啟動時 mail.Enabled=false，
+// MailSchedulerFn 不被呼叫。
+func TestRunnerMail_InitiallyDisabled(t *testing.T) {
+	tmp := t.TempDir()
+	var mu sync.Mutex
+	callCount := 0
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir: tmp,
+			Mail:    config.MailSettings{Enabled: false},
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+			mu.Lock()
+			callCount++
+			mu.Unlock()
+			<-ctx.Done()
+		},
+		MailReloadInterval: 20 * time.Millisecond,
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner error: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if callCount != 0 {
+		t.Fatalf("MailSchedulerFn 不應在 mail.Enabled=false 時被呼叫，但被呼叫了 %d 次", callCount)
+	}
+}
+
+// TestRunnerMail_HotReloadEnablesMailScheduler 確認：
+// 服務啟動時 mail.Enabled=false，在下一個 reload 週期 config 改為 true，
+// MailSchedulerFn 應被自動呼叫（不需重啟服務）。
+func TestRunnerMail_HotReloadEnablesMailScheduler(t *testing.T) {
+	tmp := t.TempDir()
+
+	var mu sync.Mutex
+	schedulerCalled := false
+	reloadCallCount := 0
+
+	cfgFn := func() (config.Settings, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		reloadCallCount++
+		enabled := reloadCallCount > 1 // 第一次 reload 後改為 enabled
+		return config.Settings{
+			RootDir: tmp,
+			Mail: config.MailSettings{
+				Enabled:  enabled,
+				Schedule: "23:59",
+				To:       []string{"test@example.com"},
+			},
+		}, nil
+	}
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir: tmp,
+			Mail:    config.MailSettings{Enabled: false}, // 初始停用
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			select {
+			case <-time.After(150 * time.Millisecond):
+			case <-ctx.Done():
+			}
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+			mu.Lock()
+			schedulerCalled = true
+			mu.Unlock()
+			<-ctx.Done()
+		},
+		ConfigLoadFn:       cfgFn,
+		MailReloadInterval: 20 * time.Millisecond,
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner error: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !schedulerCalled {
+		t.Fatal("hot-reload：MailSchedulerFn 應在設定從 disabled 改為 enabled 後被呼叫")
+	}
+}
+
+// TestRunnerMail_HotReloadDisablesMailScheduler 確認：
+// 服務啟動時 mail.Enabled=true，在下一個 reload 週期 config 改為 false，
+// 排程應停止（mailCancel 被呼叫，runner 正常結束不 panic）。
+func TestRunnerMail_HotReloadDisablesMailScheduler(t *testing.T) {
+	tmp := t.TempDir()
+
+	var mu sync.Mutex
+	reloadCallCount := 0
+	cancelCalled := false
+
+	cfgFn := func() (config.Settings, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		reloadCallCount++
+		enabled := reloadCallCount <= 1 // 第一次 reload 後改為 disabled
+		return config.Settings{
+			RootDir: tmp,
+			Mail: config.MailSettings{
+				Enabled:  enabled,
+				Schedule: "23:59",
+				To:       []string{"test@example.com"},
+			},
+		}, nil
+	}
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir: tmp,
+			Mail: config.MailSettings{
+				Enabled:  true,
+				Schedule: "23:59",
+				To:       []string{"test@example.com"},
+			},
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			select {
+			case <-time.After(100 * time.Millisecond):
+			case <-ctx.Done():
+			}
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+			<-ctx.Done()
+			mu.Lock()
+			cancelCalled = true
+			mu.Unlock()
+		},
+		ConfigLoadFn:       cfgFn,
+		MailReloadInterval: 20 * time.Millisecond,
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner should not error when mail scheduler is hot-reload disabled: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !cancelCalled {
+		t.Fatal("hot-reload：mail 排程應在設定從 enabled 改為 disabled 後，其 context 被取消")
+	}
+}
+
+// TestRunnerMail_HotReloadChangesSchedule 確認排程時間改變時，
+// 舊排程被取消並以新設定重啟。
+func TestRunnerMail_HotReloadChangesSchedule(t *testing.T) {
+	tmp := t.TempDir()
+
+	var mu sync.Mutex
+	callCount := 0
+	reloadCallCount := 0
+	var schedules []string
+
+	cfgFn := func() (config.Settings, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		reloadCallCount++
+		schedule := "10:00"
+		if reloadCallCount > 1 {
+			schedule = "20:00"
+		}
+		return config.Settings{
+			RootDir: tmp,
+			Mail: config.MailSettings{
+				Enabled:  true,
+				Schedule: schedule,
+				To:       []string{"test@example.com"},
+			},
+		}, nil
+	}
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir: tmp,
+			Mail: config.MailSettings{
+				Enabled:  true,
+				Schedule: "10:00",
+				To:       []string{"test@example.com"},
+			},
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			select {
+			case <-time.After(150 * time.Millisecond):
+			case <-ctx.Done():
+			}
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, mail config.MailSettings, _ func() time.Time) {
+			mu.Lock()
+			callCount++
+			schedules = append(schedules, mail.Schedule)
+			mu.Unlock()
+			<-ctx.Done()
+		},
+		ConfigLoadFn:       cfgFn,
+		MailReloadInterval: 20 * time.Millisecond,
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner error: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if callCount < 2 {
+		t.Fatalf("排程時間改變時應重啟排程，MailSchedulerFn 至少呼叫 2 次，實際 %d 次", callCount)
+	}
+	found20 := false
+	for _, s := range schedules {
+		if s == "20:00" {
+			found20 = true
+			break
+		}
+	}
+	if !found20 {
+		t.Fatalf("應有一次以 schedule=20:00 呼叫 MailSchedulerFn，實際 schedules=%v", schedules)
+	}
+}

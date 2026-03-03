@@ -54,7 +54,7 @@ func status() error {
 	if tz == "" {
 		tz = "Asia/Taipei"
 	}
-	fmt.Println("MAIL 系統啟用狀態:", mail.Enabled)
+	fmt.Println("郵件系統啟用狀態:", mail.Enabled)
 	fmt.Println("寄送時間:", mail.Schedule, "(時區:", tz+")")
 	fmt.Println("收件人:", strings.Join(mail.To, ", "))
 	fmt.Println("主旨:", mail.Subject)
@@ -103,6 +103,15 @@ func set(args []string) error {
 }
 
 func send(args []string) error {
+	return sendWithGmailFn(args, nil)
+}
+
+// sendWithGmailFn 是 send 的可測試版本，允許注入 SendGmail 函式（nil 時使用 mailer.SendGmail）。
+func sendWithGmailFn(args []string, gmailFn func(ctx context.Context, cfg mailer.SMTPConfig, opts mailer.ReportOptions, sendFn mailer.SendMailFunc) error) error {
+	if gmailFn == nil {
+		gmailFn = mailer.SendGmail
+	}
+
 	settings, err := config.Load()
 	if err != nil {
 		return err
@@ -191,12 +200,13 @@ func send(args []string) error {
 	from := normalizeFrom(mail.SMTPFrom, user)
 
 	cfg := mailer.SMTPConfig{
-		Host:     host,
-		Port:     port,
-		Username: user,
-		Password: pass,
-		From:     from,
-		To:       recipients,
+		Host:        host,
+		Port:        port,
+		Username:    user,
+		Password:    pass,
+		From:        from,
+		To:          recipients,
+		DialTimeout: time.Duration(mail.SMTPDialTimeout) * time.Second, // 從 config 讀取連線逾時
 	}
 	opts := mailer.ReportOptions{
 		LogDir:  logDir,
@@ -205,14 +215,16 @@ func send(args []string) error {
 		Body:    body,
 	}
 
-	if err := mailer.SendGmail(context.Background(), cfg, opts, nil); err != nil {
-		_ = writeMailLog(mailLogDir, time.Now(), "fail", dayStr, recipients, subject, "error", err.Error())
-		return err
-	}
-
+	// 在呼叫 SendGmail 前先確立附件狀態，以便寄信失敗時也能正確記錄實際附件情況
 	attachmentStatus := "attached"
 	if attachmentMissing {
 		attachmentStatus = "missing"
+	}
+
+	if err := gmailFn(context.Background(), cfg, opts, nil); err != nil {
+		// 寄信失敗時記錄真實附件狀況，錯誤原因由「錯誤=」欄位描述
+		_ = writeMailLog(mailLogDir, time.Now(), "fail", dayStr, recipients, subject, attachmentStatus, err.Error())
+		return err
 	}
 	_ = writeMailLog(mailLogDir, time.Now(), "ok", dayStr, recipients, subject, attachmentStatus, "")
 	fmt.Println("郵件已送出 (若附件缺漏會自動省略)。")

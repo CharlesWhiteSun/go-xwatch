@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -24,12 +25,13 @@ type SendMailFunc func(addr string, a smtp.Auth, from string, to []string, msg [
 
 // SMTPConfig 設定 SMTP 連線與收件資訊。
 type SMTPConfig struct {
-	Host     string
-	Port     int
-	Username string
-	Password string
-	From     string
-	To       []string
+	Host        string
+	Port        int
+	Username    string
+	Password    string
+	From        string
+	To          []string
+	DialTimeout time.Duration // TCP 連線逾時，0 = 預設 30s
 }
 
 // ReportOptions 控制報表檔與郵件內容。
@@ -41,10 +43,10 @@ type ReportOptions struct {
 }
 
 // SendGmail 依設定將指定日期的監控日誌打包並寄出。
-// 若 sendFn 為 nil，預設使用 smtp.SendMail。
+// 若 sendFn 為 nil，預設使用具備 DialTimeout 的自訂撥號函式。
 func SendGmail(ctx context.Context, cfg SMTPConfig, opts ReportOptions, sendFn SendMailFunc) error {
 	if sendFn == nil {
-		sendFn = smtp.SendMail
+		sendFn = dialAndSend(cfg.DialTimeout)
 	}
 
 	cleanedBody := strings.TrimSpace(opts.Body)
@@ -79,6 +81,69 @@ func SendGmail(ctx context.Context, cfg SMTPConfig, opts ReportOptions, sendFn S
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
 	return sendFn(addr, auth, cfg.From, cfg.To, msg)
+}
+
+// dialAndSend 建立帶有 TCP 連線逾時的 SMTP 發送函式。
+// 若 dialTimeout <= 0，使用預設 30s 逾時。
+// dialTimeout 同時限制 TCP 連線建立與後續 SMTP 協議交換的總時間。
+func dialAndSend(dialTimeout time.Duration) SendMailFunc {
+	if dialTimeout <= 0 {
+		dialTimeout = 30 * time.Second
+	}
+	return func(addr string, a smtp.Auth, from string, to []string, msg []byte) error {
+		conn, err := net.DialTimeout("tcp", addr, dialTimeout)
+		if err != nil {
+			return fmt.Errorf("SMTP 連線失敗（逾時=%s）：%w", dialTimeout, err)
+		}
+		// 對整個 SMTP 交換（握手、驗證、傳輸）設定總體逾時
+		if err := conn.SetDeadline(time.Now().Add(dialTimeout)); err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("設定 SMTP 連線逾時失敗：%w", err)
+		}
+
+		host, _, _ := net.SplitHostPort(addr)
+		c, err := smtp.NewClient(conn, host)
+		if err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("建立 SMTP client 失敗：%w", err)
+		}
+		defer func() { _ = c.Close() }()
+
+		// 若支援 STARTTLS 則升級為加密連線
+		if ok, _ := c.Extension("STARTTLS"); ok {
+			if err := c.StartTLS(&tls.Config{ServerName: host}); err != nil {
+				return fmt.Errorf("STARTTLS 失敗：%w", err)
+			}
+		}
+
+		if a != nil {
+			if ok, _ := c.Extension("AUTH"); ok {
+				if err := c.Auth(a); err != nil {
+					return fmt.Errorf("SMTP 認證失敗：%w", err)
+				}
+			}
+		}
+
+		if err := c.Mail(from); err != nil {
+			return fmt.Errorf("MAIL FROM 失敗：%w", err)
+		}
+		for _, r := range to {
+			if err := c.Rcpt(r); err != nil {
+				return fmt.Errorf("RCPT TO %s 失敗：%w", r, err)
+			}
+		}
+		w, err := c.Data()
+		if err != nil {
+			return fmt.Errorf("DATA 指令失敗：%w", err)
+		}
+		if _, err := w.Write(msg); err != nil {
+			return fmt.Errorf("寫入郵件內容失敗：%w", err)
+		}
+		if err := w.Close(); err != nil {
+			return fmt.Errorf("結束郵件內容失敗：%w", err)
+		}
+		return c.Quit()
+	}
 }
 
 func validate(cfg SMTPConfig, opts ReportOptions) error {

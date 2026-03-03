@@ -21,7 +21,10 @@ const (
 	DefaultSMTPPass          = "Httc24508323"
 	DefaultSMTPHost          = "mail.httc.com.tw"
 	DefaultSMTPPort          = 587
-	DefaultHeartbeatInterval = 60 // seconds
+	DefaultSMTPDialTimeout   = 30  // seconds
+	DefaultSMTPRetries       = 3   // retry attempts after first failure
+	DefaultSMTPRetryDelay    = 120 // seconds between retries
+	DefaultHeartbeatInterval = 60  // seconds
 )
 
 type Settings struct {
@@ -35,19 +38,22 @@ type Settings struct {
 }
 
 type MailSettings struct {
-	Enabled    bool     `json:"enabled"`
-	Schedule   string   `json:"schedule"`
-	Timezone   string   `json:"timezone"`
-	To         []string `json:"to"`
-	Subject    string   `json:"subject"`
-	Body       string   `json:"body"`
-	LogDir     string   `json:"logDir"`
-	MailLogDir string   `json:"mailLogDir"`
-	SMTPHost   string   `json:"smtpHost"`
-	SMTPPort   int      `json:"smtpPort"`
-	SMTPUser   string   `json:"smtpUser"`
-	SMTPPass   string   `json:"smtpPass"`
-	SMTPFrom   string   `json:"smtpFrom"`
+	Enabled         bool     `json:"enabled"`
+	Schedule        string   `json:"schedule"`
+	Timezone        string   `json:"timezone"`
+	To              []string `json:"to"`
+	Subject         string   `json:"subject"`
+	Body            string   `json:"body"`
+	LogDir          string   `json:"logDir"`
+	MailLogDir      string   `json:"mailLogDir"`
+	SMTPHost        string   `json:"smtpHost"`
+	SMTPPort        int      `json:"smtpPort"`
+	SMTPUser        string   `json:"smtpUser"`
+	SMTPPass        string   `json:"smtpPass"`
+	SMTPFrom        string   `json:"smtpFrom"`
+	SMTPDialTimeout int      `json:"smtpDialTimeout"` // 連線逾時秒數，0 = 預設 30s
+	SMTPRetries     int      `json:"smtpRetries"`     // 失敗後重試次數，0 = 預設 3
+	SMTPRetryDelay  int      `json:"smtpRetryDelay"`  // 重試間隔秒數，0 = 預設 120s
 }
 
 func Load() (Settings, error) {
@@ -182,6 +188,16 @@ func validateAndFillMailDefaults(m MailSettings) (MailSettings, error) {
 		from = m.SMTPUser
 	}
 	m.SMTPFrom = from
+
+	if m.SMTPDialTimeout <= 0 {
+		m.SMTPDialTimeout = DefaultSMTPDialTimeout
+	}
+	if m.SMTPRetries <= 0 {
+		m.SMTPRetries = DefaultSMTPRetries
+	}
+	if m.SMTPRetryDelay <= 0 {
+		m.SMTPRetryDelay = DefaultSMTPRetryDelay
+	}
 
 	return m, nil
 }

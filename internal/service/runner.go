@@ -27,9 +27,11 @@ type Runner struct {
 	WatcherFn               func(ctx context.Context, root string, logger *slog.Logger, onEvent func(watcher.Event)) error
 	Sinks                   []pipeline.EventSink
 	Now                     func() time.Time
-	HeartbeatLogDirFn       func() (string, error)          // 測試時可覆寫，預設使用 heartbeat.DefaultLogDir
-	ConfigLoadFn            func() (config.Settings, error) // 測試時可覆寫，預設使用 config.Load
-	HeartbeatReloadInterval time.Duration                   // 熱重載間隔，預設 30s，測試時可縮短
+	HeartbeatLogDirFn       func() (string, error)                                                                         // 測試時可覆寫，預設使用 heartbeat.DefaultLogDir
+	ConfigLoadFn            func() (config.Settings, error)                                                                // 測試時可覆寫，預設使用 config.Load
+	HeartbeatReloadInterval time.Duration                                                                                  // 心跳熱重載間隔，預設 30s，測試時可縮短
+	MailReloadInterval      time.Duration                                                                                  // 郵件排程熱重載間隔，預設 30s，測試時可縮短
+	MailSchedulerFn         func(ctx context.Context, logger *slog.Logger, mail config.MailSettings, now func() time.Time) // 測試時可覆寫，預設使用 runMailScheduler
 }
 
 func (r *Runner) Run(ctx context.Context) error {
@@ -67,6 +69,9 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	// 心跳管理（支援熱重載）：服務啟動後當設定改變，不需重啟服務即可生效
 	go r.runHeartbeatManager(ctx, logger)
+
+	// 郵件排程管理（支援熱重載）：服務啟動後當 mail 設定改變，不需重啟服務即可生效
+	go r.runMailSchedulerManager(ctx, logger)
 
 	agg := pipeline.NewAggregator()
 	writer := pipeline.NewWriter(pipeline.MultiSink(sinks), logger, 500*time.Millisecond, 5*time.Second)
@@ -225,6 +230,82 @@ func (r *Runner) heartbeatReloadInterval() time.Duration {
 	return 30 * time.Second
 }
 
+func (r *Runner) mailReloadInterval() time.Duration {
+	if r.MailReloadInterval > 0 {
+		return r.MailReloadInterval
+	}
+	return 30 * time.Second
+}
+
+// mailSchedulerKey 記錄影響郵件排程行為的關鍵欄位，用於偵測設定變更。
+type mailSchedulerKey struct {
+	enabled  bool
+	schedule string
+	to       string // Join 後比對
+	timezone string
+}
+
+func mailKeyFromSettings(s config.Settings) mailSchedulerKey {
+	return mailSchedulerKey{
+		enabled:  s.Mail.Enabled,
+		schedule: s.Mail.Schedule,
+		to:       strings.Join(s.Mail.To, ","),
+		timezone: s.Mail.Timezone,
+	}
+}
+
+// runMailSchedulerManager 在背景 goroutine 中管理郵件排程，支援熱重載設定。
+// 服務啟動後若郵件設定改變（enabled/schedule/to/timezone），
+// 不需重啟服務即可自動啟動或停止郵件排程。
+func (r *Runner) runMailSchedulerManager(ctx context.Context, logger *slog.Logger) {
+	var mailCancel context.CancelFunc
+
+	stopMail := func() {
+		if mailCancel != nil {
+			mailCancel()
+			mailCancel = nil
+		}
+	}
+
+	startMailFromSettings := func(s config.Settings) {
+		stopMail()
+		if !s.Mail.Enabled {
+			return
+		}
+		mailCtx, cancel := context.WithCancel(ctx)
+		mailCancel = cancel
+		go r.mailSchedulerFn()(mailCtx, logger, s.Mail, time.Now)
+		logger.Info(fmt.Sprintf("已啟用郵件排程器，排程時間：%s", s.Mail.Schedule))
+	}
+
+	// 依啟動時的設定決定是否立即啟動
+	startMailFromSettings(r.Settings)
+
+	curKey := mailKeyFromSettings(r.Settings)
+	cfgFn := r.configLoadFn()
+
+	reloadTicker := time.NewTicker(r.mailReloadInterval())
+	defer reloadTicker.Stop()
+
+	for {
+		select {
+		case <-reloadTicker.C:
+			newSettings, err := cfgFn()
+			if err != nil {
+				continue
+			}
+			newKey := mailKeyFromSettings(newSettings)
+			if newKey != curKey {
+				startMailFromSettings(newSettings)
+				curKey = newKey
+			}
+		case <-ctx.Done():
+			stopMail()
+			return
+		}
+	}
+}
+
 // runHeartbeatManager 在背景 goroutine 中运行心跳管理，支援熱重載設定。
 // 服務啟動後若繳聽設定改變（heartbeatEnabled/heartbeatInterval），
 // 不需重啟服務即可自動嗚動或關閉心跳。
@@ -291,4 +372,11 @@ func (r *Runner) heartbeatLogDir() (string, error) {
 		return r.HeartbeatLogDirFn()
 	}
 	return heartbeat.DefaultLogDir()
+}
+
+func (r *Runner) mailSchedulerFn() func(ctx context.Context, logger *slog.Logger, mail config.MailSettings, now func() time.Time) {
+	if r.MailSchedulerFn != nil {
+		return r.MailSchedulerFn
+	}
+	return runMailScheduler
 }

@@ -71,7 +71,7 @@ func runMailScheduler(ctx context.Context, logger *slog.Logger, mail config.Mail
 			timer.Stop()
 			return
 		case <-timer.C:
-			if err := sendDailyMail(ctx, logger, mail, loc, now()); err != nil {
+			if err := sendDailyMail(ctx, logger, mail, loc, now(), nil); err != nil {
 				logger.Error(fmt.Sprintf("每日寄信失敗：%v", err))
 			}
 		}
@@ -96,7 +96,7 @@ func nextSendTime(now time.Time, schedule string, loc *time.Location) (time.Time
 	return target, nil
 }
 
-func sendDailyMail(ctx context.Context, logger *slog.Logger, mail config.MailSettings, loc *time.Location, now time.Time) error {
+func sendDailyMail(ctx context.Context, logger *slog.Logger, mail config.MailSettings, loc *time.Location, now time.Time, sendFn mailer.SendMailFunc) error {
 	if len(mail.To) == 0 {
 		return errors.New("未設定收件人，無法寄送")
 	}
@@ -143,12 +143,13 @@ func sendDailyMail(ctx context.Context, logger *slog.Logger, mail config.MailSet
 	}
 
 	cfg := mailer.SMTPConfig{
-		Host:     host,
-		Port:     port,
-		Username: user,
-		Password: pass,
-		From:     from,
-		To:       recipients,
+		Host:        host,
+		Port:        port,
+		Username:    user,
+		Password:    pass,
+		From:        from,
+		To:          recipients,
+		DialTimeout: time.Duration(mail.SMTPDialTimeout) * time.Second,
 	}
 	opts := mailer.ReportOptions{
 		LogDir:  logDir,
@@ -157,14 +158,44 @@ func sendDailyMail(ctx context.Context, logger *slog.Logger, mail config.MailSet
 		Body:    body,
 	}
 
-	logger.Info(fmt.Sprintf("開始寄信：day=%s recipients=%s host=%s:%d", dayStr, strings.Join(recipients, ","), cfg.Host, cfg.Port))
-	err := mailer.SendGmail(ctx, cfg, opts, nil)
+	// 重試參數
+	maxRetries := mail.SMTPRetries
+	if maxRetries <= 0 {
+		maxRetries = 3
+	}
+	retryDelay := time.Duration(mail.SMTPRetryDelay) * time.Second
+	if retryDelay <= 0 {
+		retryDelay = 120 * time.Second
+	}
+
+	logger.Info(fmt.Sprintf("開始寄信：day=%s recipients=%s host=%s:%d 最多重試=%d", dayStr, strings.Join(recipients, ","), cfg.Host, cfg.Port, maxRetries))
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			logger.Warn(fmt.Sprintf("寄信重試第 %d/%d 次，等待 %s...", attempt, maxRetries, retryDelay))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retryDelay):
+			}
+		}
+		lastErr = mailer.SendGmail(ctx, cfg, opts, sendFn)
+		if lastErr == nil {
+			break
+		}
+		logger.Warn(fmt.Sprintf("寄信失敗 (第%d/%d次)：%v", attempt+1, maxRetries+1, lastErr))
+	}
+
+	err := lastErr
 	attachmentStatus := "attached"
 	if attachmentMissing {
 		attachmentStatus = "missing"
 	}
 	if err != nil {
-		if logErr := writeMailLog(mailLogDir, now, "fail", dayStr, recipients, subject, "error", err.Error()); logErr != nil {
+		// 寄信失敗時仍記錄真實附件狀況（已附檔/未附檔），
+		// 錯誤原因由「錯誤=」欄位描述，避免附件欄位顯示誤導性的「失敗」
+		if logErr := writeMailLog(mailLogDir, now, "fail", dayStr, recipients, subject, attachmentStatus, err.Error()); logErr != nil {
 			logger.Error(fmt.Sprintf("寫入 mail log 失敗：%v", logErr))
 		}
 		logger.Error(fmt.Sprintf("寄信錯誤：%v", err))
@@ -276,7 +307,7 @@ func writeMailLog(dir string, now time.Time, status string, day string, recipien
 	if statusText == "" {
 		statusText = status
 	}
-	attachmentText := map[string]string{"attached": "已附檔", "missing": "未附檔", "error": "失敗"}[attachmentStatus]
+	attachmentText := map[string]string{"attached": "已附檔", "missing": "未附檔"}[attachmentStatus]
 	if attachmentText == "" {
 		attachmentText = attachmentStatus
 	}

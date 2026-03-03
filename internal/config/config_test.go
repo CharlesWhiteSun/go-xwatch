@@ -143,3 +143,47 @@ func TestHeartbeatIntervalZeroFillsDefault(t *testing.T) {
 		t.Fatalf("expected HeartbeatInterval=%d, got %d", DefaultHeartbeatInterval, loaded.HeartbeatInterval)
 	}
 }
+
+// TestSMTPTimeoutRetryDefaults 確認 SMTPDialTimeout/SMTPRetries/SMTPRetryDelay
+// 在 ValidateAndFillDefaults 中正確填入預設值。
+func TestSMTPTimeoutRetryDefaults(t *testing.T) {
+	root := "./foo"
+	s, err := ValidateAndFillDefaults(Settings{RootDir: root})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if s.Mail.SMTPDialTimeout != DefaultSMTPDialTimeout {
+		t.Fatalf("expected SMTPDialTimeout=%d, got %d", DefaultSMTPDialTimeout, s.Mail.SMTPDialTimeout)
+	}
+	if s.Mail.SMTPRetries != DefaultSMTPRetries {
+		t.Fatalf("expected SMTPRetries=%d, got %d", DefaultSMTPRetries, s.Mail.SMTPRetries)
+	}
+	if s.Mail.SMTPRetryDelay != DefaultSMTPRetryDelay {
+		t.Fatalf("expected SMTPRetryDelay=%d, got %d", DefaultSMTPRetryDelay, s.Mail.SMTPRetryDelay)
+	}
+}
+
+// TestSMTPTimeoutRetryCustom 確認自訂的 SMTP 逾時與重試參數能被保留。
+func TestSMTPTimeoutRetryCustom(t *testing.T) {
+	root := "./foo"
+	s, err := ValidateAndFillDefaults(Settings{
+		RootDir: root,
+		Mail: MailSettings{
+			SMTPDialTimeout: 60,
+			SMTPRetries:     5,
+			SMTPRetryDelay:  300,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if s.Mail.SMTPDialTimeout != 60 {
+		t.Fatalf("expected SMTPDialTimeout=60, got %d", s.Mail.SMTPDialTimeout)
+	}
+	if s.Mail.SMTPRetries != 5 {
+		t.Fatalf("expected SMTPRetries=5, got %d", s.Mail.SMTPRetries)
+	}
+	if s.Mail.SMTPRetryDelay != 300 {
+		t.Fatalf("expected SMTPRetryDelay=300, got %d", s.Mail.SMTPRetryDelay)
+	}
+}

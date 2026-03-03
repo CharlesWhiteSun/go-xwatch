@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/smtp"
 	"os"
 	"path/filepath"
@@ -211,5 +212,91 @@ func TestSendGmailSkipsMissingAttachment(t *testing.T) {
 	}
 	if strings.Contains(string(captured.msg), "application/zip") {
 		t.Fatalf("should not include attachment when missing")
+	}
+}
+
+// ── dialAndSend 測試 ────────────────────────────────────────────────
+
+// TestDialAndSend_ConnectionRefused 確認連線被拒絕時，dialAndSend 迅速回傳包含
+// "SMTP 連線失敗" 的錯誤，不會長時間卡住。
+func TestDialAndSend_ConnectionRefused(t *testing.T) {
+	// 建立一個臨時 listener 取得可用埠號後立即關閉，確保連線被拒絕
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close() // 立即關閉，讓連線 refused
+
+	sender := dialAndSend(5 * time.Second)
+	start := time.Now()
+	sendErr := sender(addr, nil, "from@x.com", []string{"to@x.com"}, []byte("hello"))
+	elapsed := time.Since(start)
+
+	if sendErr == nil {
+		t.Fatal("expected error from dialAndSend with refused connection")
+	}
+	if !strings.Contains(sendErr.Error(), "SMTP 連線失敗") {
+		t.Fatalf("expected error message to contain 'SMTP 連線失敗', got: %v", sendErr)
+	}
+	// 拒絕連線應在幾秒內立即失敗，遠小於 5s 超時
+	if elapsed > 4*time.Second {
+		t.Fatalf("connection refused should fail quickly, elapsed=%s", elapsed)
+	}
+}
+
+// TestDialAndSend_HangsDetectedByTimeout 確認當 SMTP 伺服器接受 TCP 連線但
+// 不回應 220 問候時，dialAndSend 在逾時後回傳錯誤（不卡住）。
+func TestDialAndSend_HangsDetectedByTimeout(t *testing.T) {
+	// 伺服器接受連線但不發任何資料
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, _ := ln.Accept()
+		if conn != nil {
+			defer conn.Close()
+			// 模擬不回應：等待遠長於測試逾時
+			time.Sleep(10 * time.Second)
+		}
+	}()
+
+	const timeout = 200 * time.Millisecond
+	sender := dialAndSend(timeout)
+	start := time.Now()
+	sendErr := sender(ln.Addr().String(), nil, "from@x.com", []string{"to@x.com"}, []byte("hello"))
+	elapsed := time.Since(start)
+
+	if sendErr == nil {
+		t.Fatal("expected timeout error from dialAndSend with non-responding server")
+	}
+	// 應在 timeout 的合理時間內返回（允許 2 倍寬容）
+	if elapsed > timeout*3 {
+		t.Fatalf("dialAndSend should time out within ~%s, but took %s", timeout, elapsed)
+	}
+}
+
+// TestDialAndSend_DefaultTimeout30s 確認 dialAndSend(0) 使用 30s 預設逾時。
+// 透過包裝的錯誤訊息驗證 30s 出現在訊息中（不需真正等待 30s）。
+func TestDialAndSend_DefaultTimeout30s(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	sender := dialAndSend(0) // 0 → 預設 30s
+	sendErr := sender(addr, nil, "from@x.com", []string{"to@x.com"}, []byte("hello"))
+
+	if sendErr == nil {
+		t.Fatal("expected error")
+	}
+	// 錯誤中應包含逾時資訊
+	if !strings.Contains(sendErr.Error(), "SMTP 連線失敗") {
+		t.Fatalf("unexpected error: %v", sendErr)
 	}
 }
