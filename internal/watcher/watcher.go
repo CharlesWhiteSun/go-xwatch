@@ -24,12 +24,41 @@ type Event struct {
 	TS    time.Time
 }
 
+type Options struct {
+	Logger    *slog.Logger
+	Formatter func(root string, ev Event) string
+	OnEvent   func(Event)
+	WatcherFn func() (*fsnotify.Watcher, error)
+	Now       func() time.Time
+}
+
+// Run 保留舊介面，委派到 RunWithOptions。
 func Run(ctx context.Context, root string, logger *slog.Logger, onEvent func(Event)) error {
+	return RunWithOptions(ctx, root, Options{Logger: logger, OnEvent: onEvent})
+}
+
+// RunWithOptions 允許注入 formatter/hook，提升解耦。
+func RunWithOptions(ctx context.Context, root string, opt Options) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	logger := opt.Logger
 	if logger == nil {
 		logger = NewLogger(os.Stdout)
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	nowFn := opt.Now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	formatFn := opt.Formatter
+	if formatFn == nil {
+		formatFn = func(root string, ev Event) string {
+			return humanize.Format(humanize.Input{TS: ev.TS, Op: ev.Op.String(), Path: ev.Path, IsDir: ev.IsDir, Size: ev.Size}, humanize.Options{Root: root, ShowSize: true, ShowOp: true, HideTime: true})
+		}
+	}
+	watchFactory := opt.WatcherFn
+	if watchFactory == nil {
+		watchFactory = fsnotify.NewWatcher
 	}
 
 	info, err := os.Stat(root)
@@ -40,7 +69,7 @@ func Run(ctx context.Context, root string, logger *slog.Logger, onEvent func(Eve
 		return fmt.Errorf("root is not a directory: %s", root)
 	}
 
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := watchFactory()
 	if err != nil {
 		return err
 	}
@@ -64,15 +93,15 @@ func Run(ctx context.Context, root string, logger *slog.Logger, onEvent func(Eve
 			if shouldIgnore(event.Name) {
 				continue
 			}
-			info := Event{Path: event.Name, Op: event.Op, TS: time.Now()}
+			info := Event{Path: event.Name, Op: event.Op, TS: nowFn()}
 			if fi, statErr := os.Stat(event.Name); statErr == nil {
 				info.IsDir = fi.IsDir()
 				info.Size = fi.Size()
 			}
-			friendly := humanize.Format(humanize.Input{TS: info.TS, Op: info.Op.String(), Path: info.Path, IsDir: info.IsDir, Size: info.Size}, humanize.Options{Root: root, ShowSize: true, ShowOp: true, HideTime: true})
-			logger.Info(friendly, slog.String("路徑", info.Path), slog.String("動作", info.Op.String()))
-			if onEvent != nil {
-				onEvent(info)
+			msg := formatFn(root, info)
+			logger.Info(msg, slog.String("路徑", info.Path), slog.String("動作", info.Op.String()))
+			if opt.OnEvent != nil {
+				opt.OnEvent(info)
 			}
 			if event.Has(fsnotify.Create) {
 				if fi, statErr := os.Stat(event.Name); statErr == nil && fi.IsDir() {

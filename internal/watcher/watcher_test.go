@@ -37,6 +37,21 @@ func (h *channelHandler) Handle(_ context.Context, rec slog.Record) error {
 func (h *channelHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
 func (h *channelHandler) WithGroup(_ string) slog.Handler      { return h }
 
+type msgHandler struct {
+	ch chan string
+}
+
+func (h *msgHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *msgHandler) Handle(_ context.Context, rec slog.Record) error {
+	select {
+	case h.ch <- rec.Message:
+	default:
+	}
+	return nil
+}
+func (h *msgHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *msgHandler) WithGroup(_ string) slog.Handler      { return h }
+
 func TestWatcherDetectsFileCreate(t *testing.T) {
 	tmp := t.TempDir()
 	ch := make(chan string, 10)
@@ -126,4 +141,47 @@ func TestShouldIgnore(t *testing.T) {
 			t.Fatalf("shouldIgnore(%q)=%v want %v", c.path, got, c.want)
 		}
 	}
+}
+
+func TestRunWithOptionsFormatterAndHook(t *testing.T) {
+	tmp := t.TempDir()
+	msgCh := make(chan string, 4)
+
+	var hookPath string
+	logger := slog.New(&msgHandler{ch: msgCh})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunWithOptions(ctx, tmp, Options{
+			Logger: logger,
+			Formatter: func(_ string, ev Event) string {
+				return "CUSTOM:" + filepath.Base(ev.Path)
+			},
+			OnEvent: func(ev Event) { hookPath = ev.Path },
+		})
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	path := filepath.Join(tmp, "c.txt")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write file failed: %v", err)
+	}
+
+	select {
+	case msg := <-msgCh:
+		if msg != "CUSTOM:c.txt" {
+			t.Fatalf("unexpected formatted message: %s", msg)
+		}
+		cancel()
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatalf("timeout waiting for formatted message")
+	}
+
+	if hookPath == "" || filepath.Clean(hookPath) != filepath.Clean(path) {
+		t.Fatalf("hook path not set, got %q", hookPath)
+	}
+	_ = <-errCh
 }
