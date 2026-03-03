@@ -20,6 +20,7 @@ import (
 	"time"
 	"unsafe"
 
+	"go-xwatch/internal/cli"
 	"go-xwatch/internal/config"
 	"go-xwatch/internal/crypto"
 	"go-xwatch/internal/journal"
@@ -266,58 +267,94 @@ func runInteractive() error {
 		return nil
 	}
 
-	fs := flag.NewFlagSet(command, flag.ContinueOnError)
-	rootFlag := fs.String("root", "", "watch root directory (default: exe directory)")
-	sinceFlag := fs.String("since", "", "RFC3339 timestamp filter for export")
-	untilFlag := fs.String("until", "", "optional RFC3339 upper bound for export")
-	limitFlag := fs.Int("limit", 1000, "max rows for export")
-	formatFlag := fs.String("format", "json", "export format: json|jsonl|text")
-	allFlag := fs.Bool("all", false, "export all entries ignoring time filters")
-	bomFlag := fs.Bool("bom", false, "prepend UTF-8 BOM for Windows editors")
-	outFlag := fs.String("out", "", "output file path (use '-' for stdout; default: %ProgramData%/go-xwatch)")
-	installFlag := fs.Bool("install-service", false, "install and start Windows service after init")
-	if err := fs.Parse(args); err != nil {
-		return err
+	reg := buildCommandRegistry()
+	cmd, ok := reg.Get(command)
+	if !ok {
+		return fmt.Errorf("unknown command: %s", command)
 	}
+	return cmd.Run(args)
+}
 
-	switch command {
-	case "init":
-		if err := initAndExit(*rootFlag, *installFlag); err != nil {
-			return err
-		}
-		return nil
-	case "help":
+func buildCommandRegistry() *cli.Registry {
+	reg := cli.NewRegistry()
+
+	reg.Register(cli.CommandFunc{NameStr: "help", Fn: func(_ []string) error {
 		printUsage()
 		return nil
-	case "status":
+	}})
+
+	reg.Register(cli.CommandFunc{NameStr: "init", Fn: func(args []string) error {
+		fs := flag.NewFlagSet("init", flag.ContinueOnError)
+		rootFlag := fs.String("root", "", "watch root directory (default: exe directory)")
+		installFlag := fs.Bool("install-service", false, "install and start Windows service after init")
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+		return initAndExit(*rootFlag, *installFlag)
+	}})
+
+	reg.Register(cli.CommandFunc{NameStr: "status", Fn: func(_ []string) error {
 		return printStatus()
-	case "start":
+	}})
+
+	reg.Register(cli.CommandFunc{NameStr: "start", Fn: func(_ []string) error {
 		if err := service.Start(serviceName); err != nil {
 			return err
 		}
 		fmt.Println("服務已啟動。")
 		return nil
-	case "stop":
+	}})
+
+	reg.Register(cli.CommandFunc{NameStr: "stop", Fn: func(_ []string) error {
 		if err := service.Stop(serviceName); err != nil {
 			return err
 		}
 		fmt.Println("服務已停止。")
 		return nil
-	case "uninstall":
+	}})
+
+	reg.Register(cli.CommandFunc{NameStr: "uninstall", Fn: func(_ []string) error {
 		if err := service.Uninstall(serviceName); err != nil {
 			return err
 		}
 		fmt.Println("服務已移除。")
 		return nil
-	case "cleanup", "remove":
-		return stopAndUninstall()
-	case "clear", "purge", "wipe":
-		return clearJournal()
-	case "export":
+	}})
+
+	cleanupFn := func([]string) error { return stopAndUninstall() }
+	reg.Register(cli.CommandFunc{NameStr: "cleanup", Fn: cleanupFn})
+	reg.Register(cli.CommandFunc{NameStr: "remove", Fn: cleanupFn})
+
+	clearFn := func([]string) error { return clearJournal() }
+	reg.Register(cli.CommandFunc{NameStr: "clear", Fn: clearFn})
+	reg.Register(cli.CommandFunc{NameStr: "purge", Fn: clearFn})
+	reg.Register(cli.CommandFunc{NameStr: "wipe", Fn: clearFn})
+
+	reg.Register(cli.CommandFunc{NameStr: "export", Fn: func(args []string) error {
+		fs := flag.NewFlagSet("export", flag.ContinueOnError)
+		sinceFlag := fs.String("since", "", "RFC3339 timestamp filter for export")
+		untilFlag := fs.String("until", "", "optional RFC3339 upper bound for export")
+		limitFlag := fs.Int("limit", 1000, "max rows for export")
+		formatFlag := fs.String("format", "json", "export format: json|jsonl|text")
+		allFlag := fs.Bool("all", false, "export all entries ignoring time filters")
+		bomFlag := fs.Bool("bom", false, "prepend UTF-8 BOM for Windows editors")
+		outFlag := fs.String("out", "", "output file path (use '-' for stdout; default: %ProgramData%/go-xwatch)")
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
 		return exportJournal(*sinceFlag, *untilFlag, *limitFlag, *formatFlag, *allFlag, *bomFlag, *outFlag)
-	case "daily":
+	}})
+
+	reg.Register(cli.CommandFunc{NameStr: "daily", Fn: func(args []string) error {
 		return runDaily(args)
-	case "run":
+	}})
+
+	reg.Register(cli.CommandFunc{NameStr: "run", Fn: func(args []string) error {
+		fs := flag.NewFlagSet("run", flag.ContinueOnError)
+		rootFlag := fs.String("root", "", "watch root directory (default: exe directory)")
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
 		root, err := resolveRoot(*rootFlag)
 		if err != nil {
 			return err
@@ -325,9 +362,9 @@ func runInteractive() error {
 		logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 		logger.Info("running in console mode", "root", root)
 		return watcher.Run(nil, root, logger, nil)
-	default:
-		return fmt.Errorf("unknown command: %s", command)
-	}
+	}})
+
+	return reg
 }
 
 func initAndExit(rootArg string, installService bool) error {

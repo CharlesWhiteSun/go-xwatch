@@ -70,7 +70,7 @@ func Run(ctx context.Context, root string, logger *slog.Logger, onEvent func(Eve
 				info.Size = fi.Size()
 			}
 			friendly := humanize.Format(humanize.Input{TS: info.TS, Op: info.Op.String(), Path: info.Path, IsDir: info.IsDir, Size: info.Size}, humanize.Options{Root: root, ShowSize: true, ShowOp: true})
-			logger.Info(friendly)
+			logger.Info(friendly, "path", info.Path, "op", info.Op.String())
 			if onEvent != nil {
 				onEvent(info)
 			}

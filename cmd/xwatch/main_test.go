@@ -319,3 +319,15 @@ func TestEvaluateElevation_RelaunchError(t *testing.T) {
 		t.Fatalf("decision = %s, want continue", decision)
 	}
 }
+
+func TestBuildCommandRegistryContainsAliases(t *testing.T) {
+	reg := buildCommandRegistry()
+	for _, name := range []string{"init", "help", "status", "start", "stop", "uninstall", "cleanup", "remove", "clear", "purge", "wipe", "export", "daily", "run"} {
+		if _, ok := reg.Get(name); !ok {
+			t.Fatalf("command %s not registered", name)
+		}
+	}
+	if _, ok := reg.Get("unknown-command"); ok {
+		t.Fatalf("unexpected command registered")
+	}
+}
