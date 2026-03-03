@@ -21,6 +21,7 @@ import (
 	"go-xwatch/internal/crypto"
 	"go-xwatch/internal/daily"
 	"go-xwatch/internal/exporter"
+	"go-xwatch/internal/heartbeatcmd"
 	"go-xwatch/internal/journal"
 	"go-xwatch/internal/mailcmd"
 	"go-xwatch/internal/paths"
@@ -251,6 +252,10 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 		return mailcmd.Run(args)
 	}})
 
+	reg.Register(cli.CommandFunc{CommandName: "heartbeat", Fn: func(args []string) error {
+		return heartbeatcmd.Run(args)
+	}})
+
 	reg.Register(cli.CommandFunc{CommandName: "run", Fn: func(args []string) error {
 		fs := flag.NewFlagSet("run", flag.ContinueOnError)
 		rootFlag := fs.String("root", "", "watch root directory (default: exe directory)")
@@ -314,6 +319,18 @@ func (c *cliApp) printStatus() error {
 	fmt.Println("service:", c.serviceName)
 	fmt.Println("status:", status)
 
+	// 顯示目前 CLI 執行的 Windows 權限等級
+	if isElevated() {
+		fmt.Println("privilege: administrator（系統管理員）")
+	} else {
+		fmt.Println("privilege: standard user（一般使用者）")
+	}
+
+	// 顯示服務所使用的 Windows 帳戶
+	if account, aerr := service.ServiceAccount(c.serviceName); aerr == nil {
+		fmt.Println("service account:", account)
+	}
+
 	settings, err := config.Load()
 	if err == nil {
 		fmt.Println("root:", settings.RootDir)
@@ -324,6 +341,10 @@ func (c *cliApp) printStatus() error {
 				dir = filepath.Join(os.Getenv("ProgramData"), "go-xwatch", "daily")
 			}
 			fmt.Println("daily dir:", dir)
+		}
+		fmt.Println("heartbeat:", settings.HeartbeatEnabled)
+		if settings.HeartbeatEnabled {
+			fmt.Printf("heartbeat interval: %d 秒\n", settings.HeartbeatInterval)
 		}
 	} else {
 		fmt.Println("root: (讀取設定失敗)")
@@ -419,6 +440,7 @@ func (c *cliApp) printUsage() {
 	fmt.Fprintln(w, "    --out PATH\t輸出檔路徑，'-' 為 stdout，預設 %ProgramData%/go-xwatch")
 	fmt.Fprintln(w, "  daily <subcommand> [flags]\t管理每日輸出 (csv/json/email 等)")
 	fmt.Fprintln(w, "  mail <subcommand> [flags]\t管理郵件寄送 (status/enable/disable/set/send)")
+	fmt.Fprintln(w, "  heartbeat <subcommand> [flags]\t管理心跳測試 (status/start/stop/set)")
 	fmt.Fprintln(w, "  run [-root PATH]\t前景模式執行，不作為服務")
 	_ = w.Flush()
 	fmt.Println("============================================================")

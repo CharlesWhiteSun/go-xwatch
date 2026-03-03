@@ -163,6 +163,30 @@ func Status(name string) (string, error) {
 	}
 }
 
+// ServiceAccount 查詢指定 Windows 服務登錄的執行帳戶。
+// 回傳空字串或 "LocalSystem" 代表以 SYSTEM 身份執行。
+func ServiceAccount(name string) (string, error) {
+	m, err := mgr.Connect()
+	if err != nil {
+		return "", err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(name)
+	if err != nil {
+		return "", err
+	}
+	defer s.Close()
+	cfg, err := s.Config()
+	if err != nil {
+		return "", err
+	}
+	account := cfg.ServiceStartName
+	if account == "" {
+		account = "LocalSystem"
+	}
+	return account, nil
+}
+
 func Run(serviceName string, settings config.Settings) error {
 	return svc.Run(serviceName, &handler{settings: settings})
 }

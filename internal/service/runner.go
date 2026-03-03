@@ -11,6 +11,7 @@ import (
 
 	"go-xwatch/internal/config"
 	"go-xwatch/internal/crypto"
+	"go-xwatch/internal/heartbeat"
 	"go-xwatch/internal/journal"
 	"go-xwatch/internal/paths"
 	"go-xwatch/internal/pipeline"
@@ -22,10 +23,13 @@ type Runner struct {
 	Settings config.Settings
 	Logger   *slog.Logger
 
-	DataDirFn func() (string, error)
-	WatcherFn func(ctx context.Context, root string, logger *slog.Logger, onEvent func(watcher.Event)) error
-	Sinks     []pipeline.EventSink
-	Now       func() time.Time
+	DataDirFn               func() (string, error)
+	WatcherFn               func(ctx context.Context, root string, logger *slog.Logger, onEvent func(watcher.Event)) error
+	Sinks                   []pipeline.EventSink
+	Now                     func() time.Time
+	HeartbeatLogDirFn       func() (string, error)          // 測試時可覆寫，預設使用 heartbeat.DefaultLogDir
+	ConfigLoadFn            func() (config.Settings, error) // 測試時可覆寫，預設使用 config.Load
+	HeartbeatReloadInterval time.Duration                   // 熱重載間隔，預設 30s，測試時可縮短
 }
 
 func (r *Runner) Run(ctx context.Context) error {
@@ -60,6 +64,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		return err
 	}
 	defer closeFn()
+
+	// 心跳管理（支援熱重載）：服務啟動後當設定改變，不需重啟服務即可生效
+	go r.runHeartbeatManager(ctx, logger)
 
 	agg := pipeline.NewAggregator()
 	writer := pipeline.NewWriter(pipeline.MultiSink(sinks), logger, 500*time.Millisecond, 5*time.Second)
@@ -202,4 +209,86 @@ func (r *Runner) nowFn() func() time.Time {
 		return r.Now
 	}
 	return time.Now
+}
+
+func (r *Runner) configLoadFn() func() (config.Settings, error) {
+	if r.ConfigLoadFn != nil {
+		return r.ConfigLoadFn
+	}
+	return config.Load
+}
+
+func (r *Runner) heartbeatReloadInterval() time.Duration {
+	if r.HeartbeatReloadInterval > 0 {
+		return r.HeartbeatReloadInterval
+	}
+	return 30 * time.Second
+}
+
+// runHeartbeatManager 在背景 goroutine 中运行心跳管理，支援熱重載設定。
+// 服務啟動後若繳聽設定改變（heartbeatEnabled/heartbeatInterval），
+// 不需重啟服務即可自動嗚動或關閉心跳。
+func (r *Runner) runHeartbeatManager(ctx context.Context, logger *slog.Logger) {
+	var hb *heartbeat.Heartbeat
+
+	stopHB := func() {
+		if hb != nil {
+			hb.Stop()
+			hb = nil
+		}
+	}
+
+	startHBFromSettings := func(s config.Settings) {
+		stopHB()
+		if !s.HeartbeatEnabled {
+			return
+		}
+		hbLogDir, err := r.heartbeatLogDir()
+		if err != nil {
+			logger.Warn(fmt.Sprintf("無法取得心跳 log 目錄，心跳記錄停用：%v", err))
+			return
+		}
+		iv := time.Duration(s.HeartbeatInterval) * time.Second
+		if iv <= 0 {
+			iv = time.Duration(heartbeat.DefaultInterval) * time.Second
+		}
+		hb = heartbeat.New(iv, heartbeat.NewFileLogFunc(hbLogDir, iv))
+		hb.Start(ctx)
+		logger.Info(fmt.Sprintf("已啟用心跳 log，位置：%s，間隔：%v", hbLogDir, iv))
+	}
+
+	// 依啟動時的設定決定是否立即啟動
+	startHBFromSettings(r.Settings)
+
+	curEnabled := r.Settings.HeartbeatEnabled
+	curInterval := r.Settings.HeartbeatInterval
+	cfgFn := r.configLoadFn()
+
+	reloadTicker := time.NewTicker(r.heartbeatReloadInterval())
+	defer reloadTicker.Stop()
+
+	for {
+		select {
+		case <-reloadTicker.C:
+			newSettings, err := cfgFn()
+			if err != nil {
+				continue
+			}
+			if newSettings.HeartbeatEnabled != curEnabled || newSettings.HeartbeatInterval != curInterval {
+				startHBFromSettings(newSettings)
+				curEnabled = newSettings.HeartbeatEnabled
+				curInterval = newSettings.HeartbeatInterval
+			}
+		case <-ctx.Done():
+			stopHB()
+			return
+		}
+	}
+}
+
+func (r *Runner) heartbeatLogDir() (string, error) {
+	if r.HeartbeatLogDirFn != nil {
+		return r.HeartbeatLogDirFn()
+	}
+	return heartbeat.DefaultLogDir()
 }

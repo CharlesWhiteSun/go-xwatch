@@ -79,3 +79,67 @@ func TestValidateAndFillDefaultsInvalidSchedule(t *testing.T) {
 		t.Fatalf("expected schedule validation error")
 	}
 }
+
+func TestHeartbeatIntervalDefault(t *testing.T) {
+	root := "./foo"
+	s, err := ValidateAndFillDefaults(Settings{RootDir: root})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if s.HeartbeatInterval != DefaultHeartbeatInterval {
+		t.Fatalf("expected HeartbeatInterval=%d, got %d", DefaultHeartbeatInterval, s.HeartbeatInterval)
+	}
+}
+
+func TestHeartbeatIntervalCustom(t *testing.T) {
+	root := "./foo"
+	s, err := ValidateAndFillDefaults(Settings{RootDir: root, HeartbeatInterval: 120})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if s.HeartbeatInterval != 120 {
+		t.Fatalf("expected HeartbeatInterval=120, got %d", s.HeartbeatInterval)
+	}
+}
+
+func TestHeartbeatEnabledPersisted(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	if err := Save(Settings{RootDir: root, HeartbeatEnabled: true, HeartbeatInterval: 30}); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if !loaded.HeartbeatEnabled {
+		t.Fatal("expected HeartbeatEnabled=true")
+	}
+	if loaded.HeartbeatInterval != 30 {
+		t.Fatalf("expected HeartbeatInterval=30, got %d", loaded.HeartbeatInterval)
+	}
+}
+
+func TestHeartbeatIntervalZeroFillsDefault(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	// 儲存時 HeartbeatInterval=0，應自動填入預設值
+	if err := Save(Settings{RootDir: root, HeartbeatInterval: 0}); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if loaded.HeartbeatInterval != DefaultHeartbeatInterval {
+		t.Fatalf("expected HeartbeatInterval=%d, got %d", DefaultHeartbeatInterval, loaded.HeartbeatInterval)
+	}
+}

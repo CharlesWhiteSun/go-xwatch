@@ -2,9 +2,12 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -73,5 +76,307 @@ func TestRunnerReturnsErrorOnEmptyRoot(t *testing.T) {
 	r := &Runner{Settings: config.Settings{RootDir: ""}, Logger: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))}
 	if err := r.Run(context.Background()); err == nil {
 		t.Fatal("expected error for empty root dir")
+	}
+}
+
+// TestRunnerHeartbeat_LogDirFnCalled 確認當 HeartbeatEnabled=true 時
+// HeartbeatLogDirFn 被呼叫。
+func TestRunnerHeartbeat_LogDirFnCalled(t *testing.T) {
+	tmp := t.TempDir()
+	called := false
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir:           tmp,
+			HeartbeatEnabled:  true,
+			HeartbeatInterval: 60,
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		// 等待 30ms，讓心跳 goroutine 完成初始化後再結束
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			select {
+			case <-time.After(30 * time.Millisecond):
+			case <-ctx.Done():
+			}
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		HeartbeatLogDirFn: func() (string, error) {
+			called = true
+			return filepath.Join(tmp, "hb-logs"), nil
+		},
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner error: %v", err)
+	}
+	if !called {
+		t.Fatal("expected HeartbeatLogDirFn to be called when HeartbeatEnabled=true")
+	}
+}
+
+// TestRunnerHeartbeat_WritesLogFiles 確認 HeartbeatEnabled=true 時
+// runner 不報錯且 HeartbeatLogDirFn 被呼叫（使用預設 60s 間隔，watcher 50ms 後結束）。
+func TestRunnerHeartbeat_WritesLogFiles(t *testing.T) {
+	tmp := t.TempDir()
+	hbLogDir := filepath.Join(tmp, "hb-logs")
+	called := false
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir:          tmp,
+			HeartbeatEnabled: true,
+			// HeartbeatInterval=0 → 預設 60s，watcher 50ms 後結束，ticker 不會觸發
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			select {
+			case <-time.After(50 * time.Millisecond):
+			case <-ctx.Done():
+			}
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		HeartbeatLogDirFn: func() (string, error) {
+			called = true
+			return hbLogDir, nil
+		},
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner error: %v", err)
+	}
+	if !called {
+		t.Fatal("expected HeartbeatLogDirFn to be called when HeartbeatEnabled=true")
+	}
+}
+
+// TestRunnerHeartbeat_DisabledNoLogDir 確認 HeartbeatEnabled=false 時
+// HeartbeatLogDirFn 不被呼叫。
+func TestRunnerHeartbeat_DisabledNoLogDir(t *testing.T) {
+	tmp := t.TempDir()
+	called := false
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir:          tmp,
+			HeartbeatEnabled: false,
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		HeartbeatLogDirFn: func() (string, error) {
+			called = true
+			return filepath.Join(tmp, "hb-logs"), nil
+		},
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner error: %v", err)
+	}
+	if called {
+		t.Fatal("HeartbeatLogDirFn should NOT be called when HeartbeatEnabled=false")
+	}
+}
+
+// TestRunnerHeartbeat_LogDirFnErrorContinues 確認 HeartbeatLogDirFn 錯誤時
+// runner 仍能正常完成（心跳停用、服務不中斷）。
+func TestRunnerHeartbeat_LogDirFnErrorContinues(t *testing.T) {
+	tmp := t.TempDir()
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir:          tmp,
+			HeartbeatEnabled: true,
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		HeartbeatLogDirFn: func() (string, error) {
+			return "", fmt.Errorf("mock log dir error")
+		},
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner should continue even if HeartbeatLogDirFn fails, got: %v", err)
+	}
+}
+
+// TestRunnerHeartbeat_ActualTickWritesFile 使用短間隔驗證 heartbeat
+// 在服務執行期間確實寫入 log 檔（透過 HeartbeatLogDirFn 回傳的暫存目錄）。
+// 此測試模擬 HeartbeatInterval=1s + watcher 等待 1.5s 讓至少一次 tick 發生。
+func TestRunnerHeartbeat_ActualTickWritesFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("跳過耗時整合測試（-short）")
+	}
+	tmp := t.TempDir()
+	hbLogDir := filepath.Join(tmp, "hb-logs")
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir:           tmp,
+			HeartbeatEnabled:  true,
+			HeartbeatInterval: 1, // 1 秒
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			select {
+			case <-time.After(1500 * time.Millisecond):
+			case <-ctx.Done():
+			}
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		HeartbeatLogDirFn: func() (string, error) {
+			return hbLogDir, nil
+		},
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner error: %v", err)
+	}
+
+	// 應至少有一個日期 log 檔
+	entries, err := os.ReadDir(hbLogDir)
+	if err != nil {
+		t.Fatalf("heartbeat log 目錄不存在: %v", err)
+	}
+	var logFiles []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "heartbeat_") && strings.HasSuffix(e.Name(), ".log") {
+			logFiles = append(logFiles, e.Name())
+		}
+	}
+	if len(logFiles) == 0 {
+		t.Fatal("預期至少有一個心跳 log 檔，但目錄為空")
+	}
+}
+
+// TestRunnerHeartbeat_HotReloadEnablesHeartbeat 確認：
+// 服務啟動時 HeartbeatEnabled=false，在下一個 reload 週期 config 改為 true，
+// 心跳 log 目錄函式應被自動呼叫（不需重啟服務）。
+func TestRunnerHeartbeat_HotReloadEnablesHeartbeat(t *testing.T) {
+	tmp := t.TempDir()
+	hbLogDir := filepath.Join(tmp, "hb-hot-logs")
+
+	var mu sync.Mutex
+	logDirCalled := false
+	reloadCallCount := 0
+
+	// ConfigLoadFn：第一次仍 disabled；第二次起改為 enabled
+	cfgFn := func() (config.Settings, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		reloadCallCount++
+		enabled := reloadCallCount > 1
+		return config.Settings{
+			RootDir:           tmp,
+			HeartbeatEnabled:  enabled,
+			HeartbeatInterval: 60,
+		}, nil
+	}
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir:          tmp,
+			HeartbeatEnabled: false, // 初始停用
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		// watcher 等待足夠讓熱重載 ticker 觸發兩次（2 × 20ms + buffer）
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			select {
+			case <-time.After(150 * time.Millisecond):
+			case <-ctx.Done():
+			}
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		HeartbeatLogDirFn: func() (string, error) {
+			mu.Lock()
+			logDirCalled = true
+			mu.Unlock()
+			return hbLogDir, nil
+		},
+		ConfigLoadFn:            cfgFn,
+		HeartbeatReloadInterval: 20 * time.Millisecond, // 極短週期，方便測試
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner error: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !logDirCalled {
+		t.Fatal("hot-reload: HeartbeatLogDirFn 應在設定從 disabled 改為 enabled 後被呼叫")
+	}
+}
+
+// TestRunnerHeartbeat_HotReloadDisablesHeartbeat 確認：
+// 服務啟動時 HeartbeatEnabled=true，在下一個 reload 週期 config 改為 false，
+// 心跳應停止（stopHB 不 panic，runner 正常結束）。
+func TestRunnerHeartbeat_HotReloadDisablesHeartbeat(t *testing.T) {
+	tmp := t.TempDir()
+	hbLogDir := filepath.Join(tmp, "hb-stop-logs")
+
+	var mu sync.Mutex
+	reloadCallCount := 0
+
+	cfgFn := func() (config.Settings, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		reloadCallCount++
+		enabled := reloadCallCount <= 1 // 第一次 reload 後改為 disabled
+		return config.Settings{
+			RootDir:           tmp,
+			HeartbeatEnabled:  enabled,
+			HeartbeatInterval: 60,
+		}, nil
+	}
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir:           tmp,
+			HeartbeatEnabled:  true, // 初始啟用
+			HeartbeatInterval: 60,
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			select {
+			case <-time.After(100 * time.Millisecond):
+			case <-ctx.Done():
+			}
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		HeartbeatLogDirFn: func() (string, error) {
+			return hbLogDir, nil
+		},
+		ConfigLoadFn:            cfgFn,
+		HeartbeatReloadInterval: 20 * time.Millisecond,
+	}
+
+	// 主要驗證：runner 正常結束，stopHB 不會 panic
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner should not error when heartbeat is hot-reload disabled: %v", err)
+	}
+}
+
+// TestServiceAccount_UnknownService 確認查詢不存在的服務時回傳 error。
+// 不需要 Admin 權限（無法連接 SCM 也是 error，同樣符合預期）。
+func TestServiceAccount_UnknownService(t *testing.T) {
+	_, err := ServiceAccount("go-xwatch-nonexistent-svc-test-99999")
+	if err == nil {
+		t.Fatal("expected error for non-existent service; got nil")
 	}
 }

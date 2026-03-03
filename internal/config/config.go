@@ -13,22 +13,25 @@ import (
 )
 
 const (
-	DefaultMailSchedule = "10:00"
-	DefaultMailTimezone = "Asia/Taipei"
-	DefaultMailSubject  = "XWatch 前一日監控日誌"
-	DefaultMailBody     = "附件為前一日的監控日誌。"
-	DefaultSMTPUser     = "notice@mail.httc.com.tw"
-	DefaultSMTPPass     = "Httc24508323"
-	DefaultSMTPHost     = "mail.httc.com.tw"
-	DefaultSMTPPort     = 587
+	DefaultMailSchedule      = "10:00"
+	DefaultMailTimezone      = "Asia/Taipei"
+	DefaultMailSubject       = "XWatch 前一日監控日誌"
+	DefaultMailBody          = "附件為前一日的監控日誌。"
+	DefaultSMTPUser          = "notice@mail.httc.com.tw"
+	DefaultSMTPPass          = "Httc24508323"
+	DefaultSMTPHost          = "mail.httc.com.tw"
+	DefaultSMTPPort          = 587
+	DefaultHeartbeatInterval = 60 // seconds
 )
 
 type Settings struct {
-	RootDir         string       `json:"rootDir"`
-	DailyCSVEnabled bool         `json:"dailyCsvEnabled"`
-	DailyCSVDir     string       `json:"dailyCsvDir"`
-	Mail            MailSettings `json:"mail"`
-	UpdatedAt       time.Time    `json:"updatedAt"`
+	RootDir           string       `json:"rootDir"`
+	DailyCSVEnabled   bool         `json:"dailyCsvEnabled"`
+	DailyCSVDir       string       `json:"dailyCsvDir"`
+	HeartbeatEnabled  bool         `json:"heartbeatEnabled"`
+	HeartbeatInterval int          `json:"heartbeatInterval"`
+	Mail              MailSettings `json:"mail"`
+	UpdatedAt         time.Time    `json:"updatedAt"`
 }
 
 type MailSettings struct {
@@ -97,6 +100,10 @@ func ValidateAndFillDefaults(s Settings) (Settings, error) {
 
 	if s.DailyCSVEnabled && strings.TrimSpace(s.DailyCSVDir) == "" {
 		s.DailyCSVDir = "daily"
+	}
+
+	if s.HeartbeatInterval <= 0 {
+		s.HeartbeatInterval = DefaultHeartbeatInterval
 	}
 
 	mail, err := validateAndFillMailDefaults(s.Mail)
