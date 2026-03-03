@@ -15,8 +15,38 @@ import (
 	"go-xwatch/internal/paths"
 )
 
+type options struct {
+	now        func() time.Time
+	stdout     io.Writer
+	stderr     io.Writer
+	createFile func(string) (io.WriteCloser, error)
+}
+
+type Option func(*options)
+
+func WithNow(fn func() time.Time) Option { return func(o *options) { o.now = fn } }
+func WithStdout(w io.Writer) Option      { return func(o *options) { o.stdout = w } }
+func WithStderr(w io.Writer) Option      { return func(o *options) { o.stderr = w } }
+func WithCreateFile(fn func(string) (io.WriteCloser, error)) Option {
+	return func(o *options) { o.createFile = fn }
+}
+
+func defaultOptions() options {
+	return options{
+		now:        time.Now,
+		stdout:     os.Stdout,
+		stderr:     os.Stderr,
+		createFile: func(p string) (io.WriteCloser, error) { return os.Create(p) },
+	}
+}
+
 // Export writes journal entries to the desired format.
-func Export(sinceStr, untilStr string, limit int, format string, all, bom bool, outPath string) error {
+func Export(sinceStr, untilStr string, limit int, format string, all, bom bool, outPath string, opts ...Option) error {
+	optsState := defaultOptions()
+	for _, opt := range opts {
+		opt(&optsState)
+	}
+
 	dataDir, err := paths.EnsureDataDir()
 	if err != nil {
 		return err
@@ -68,16 +98,16 @@ func Export(sinceStr, untilStr string, limit int, format string, all, bom bool, 
 		return fmt.Errorf("unsupported format: %s", format)
 	}
 
-	var out io.Writer = os.Stdout
+	var out io.Writer = optsState.stdout
 	var closeFn func() error
 	if outPath == "" {
-		outPath = filepath.Join(dataDir, fmt.Sprintf("export_%s.%s", time.Now().Format("20060102_150405"), ext))
+		outPath = filepath.Join(dataDir, fmt.Sprintf("export_%s.%s", optsState.now().Format("20060102_150405"), ext))
 	}
 	if outPath != "-" {
 		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 			return err
 		}
-		f, err := os.Create(outPath)
+		f, err := optsState.createFile(outPath)
 		if err != nil {
 			return err
 		}
@@ -116,9 +146,9 @@ func Export(sinceStr, untilStr string, limit int, format string, all, bom bool, 
 	}
 	if closeFn != nil {
 		_ = closeFn()
-		fmt.Fprintf(os.Stderr, "已匯出 %d 筆事件到 %s。\n", len(entries), outPath)
+		fmt.Fprintf(optsState.stderr, "已匯出 %d 筆事件到 %s。\n", len(entries), outPath)
 	} else {
-		fmt.Fprintf(os.Stderr, "已匯出 %d 筆事件。\n", len(entries))
+		fmt.Fprintf(optsState.stderr, "已匯出 %d 筆事件。\n", len(entries))
 	}
 	return nil
 }

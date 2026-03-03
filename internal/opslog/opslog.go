@@ -129,3 +129,19 @@ func (l *Logger) getLogger(now time.Time) (*slog.Logger, error) {
 	l.err = nil
 	return l.logger, nil
 }
+
+// Close releases any open file handle. Safe to call multiple times.
+func (l *Logger) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var err error
+	if l.file != nil {
+		err = l.file.Close()
+		l.file = nil
+	}
+	l.logger = nil
+	l.date = ""
+	l.err = nil
+	return err
+}

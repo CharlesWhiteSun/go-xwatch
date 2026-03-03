@@ -43,6 +43,7 @@ func TestLoggerWritesDailyFileAndRotates(t *testing.T) {
 
 	l.log(day1, "command ok")
 	l.log(day2, "cli exit", "code", 0)
+	_ = l.Close()
 
 	path1 := filepath.Join(tmp, "xwatch-ops-logs", "operations_2024-01-02.log")
 	path2 := filepath.Join(tmp, "xwatch-ops-logs", "operations_2024-01-03.log")

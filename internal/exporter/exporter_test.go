@@ -18,7 +18,12 @@ func TestExportJSONL(t *testing.T) {
 	tmp := t.TempDir()
 	prevProgramData := os.Getenv("ProgramData")
 	os.Setenv("ProgramData", tmp)
-	t.Cleanup(func() { os.Setenv("ProgramData", prevProgramData) })
+	prevSkipACL := os.Getenv("XWATCH_SKIP_ACL")
+	os.Setenv("XWATCH_SKIP_ACL", "1")
+	t.Cleanup(func() {
+		os.Setenv("ProgramData", prevProgramData)
+		os.Setenv("XWATCH_SKIP_ACL", prevSkipACL)
+	})
 
 	dataDir, err := paths.EnsureDataDir()
 	if err != nil {
