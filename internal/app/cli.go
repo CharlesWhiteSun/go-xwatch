@@ -19,7 +19,6 @@ import (
 	"go-xwatch/internal/cli"
 	"go-xwatch/internal/config"
 	"go-xwatch/internal/crypto"
-	"go-xwatch/internal/daily"
 	"go-xwatch/internal/exporter"
 	"go-xwatch/internal/heartbeatcmd"
 	"go-xwatch/internal/journal"
@@ -264,10 +263,6 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 		return exporter.Export(*sinceFlag, *untilFlag, *limitFlag, *formatFlag, *allFlag, *bomFlag, *outFlag)
 	}})
 
-	reg.Register(cli.CommandFunc{CommandName: "daily", Fn: func(args []string) error {
-		return daily.Run(args)
-	}})
-
 	reg.Register(cli.CommandFunc{CommandName: "mail", Fn: func(args []string) error {
 		if len(args) > 0 && strings.ToLower(args[0]) == "enable" {
 			if err := c.requireServiceInstalled("郵件"); err != nil {
@@ -367,14 +362,6 @@ func (c *cliApp) printStatus() error {
 	settings, err := config.Load()
 	if err == nil {
 		fmt.Println("root:", settings.RootDir)
-		fmt.Println("daily csv:", settings.DailyCSVEnabled)
-		if settings.DailyCSVEnabled {
-			dir := settings.DailyCSVDir
-			if dir == "" {
-				dir = filepath.Join(os.Getenv("ProgramData"), "go-xwatch", "daily")
-			}
-			fmt.Println("daily dir:", dir)
-		}
 		fmt.Println("heartbeat:", settings.HeartbeatEnabled)
 		if settings.HeartbeatEnabled {
 			fmt.Printf("heartbeat interval: %d 秒\n", settings.HeartbeatInterval)
@@ -503,7 +490,6 @@ func (c *cliApp) printUsage() {
 	fmt.Fprintln(w, "    --format json|jsonl|text\t匯出格式 (預設 json)")
 	fmt.Fprintln(w, "    --bom\t輸出 UTF-8 BOM 以供記事本辨識中文")
 	fmt.Fprintln(w, "    --out PATH\t輸出檔路徑，'-' 為 stdout，預設 %ProgramData%/go-xwatch")
-	fmt.Fprintln(w, "  daily <subcommand> [flags]\t管理每日輸出 (csv/json/email 等)")
 	fmt.Fprintln(w, "  mail <subcommand> [flags]\t管理郵件寄送 (status/enable/disable/set/send)")
 	fmt.Fprintln(w, "  heartbeat <subcommand> [flags]\t管理心跳測試 (status/start/stop/set)")
 	fmt.Fprintln(w, "  run [-root PATH]\t前景模式執行，不作為服務")

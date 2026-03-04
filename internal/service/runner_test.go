@@ -409,7 +409,7 @@ func TestRunnerMail_InitiallyEnabled(t *testing.T) {
 			return nil
 		},
 		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
-		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ string, _ func() time.Time) {
 			mu.Lock()
 			callCount++
 			mu.Unlock()
@@ -446,7 +446,7 @@ func TestRunnerMail_InitiallyDisabled(t *testing.T) {
 			return nil
 		},
 		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
-		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ string, _ func() time.Time) {
 			mu.Lock()
 			callCount++
 			mu.Unlock()
@@ -505,7 +505,7 @@ func TestRunnerMail_HotReloadEnablesMailScheduler(t *testing.T) {
 			return nil
 		},
 		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
-		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ string, _ func() time.Time) {
 			mu.Lock()
 			schedulerCalled = true
 			mu.Unlock()
@@ -569,7 +569,7 @@ func TestRunnerMail_HotReloadDisablesMailScheduler(t *testing.T) {
 			return nil
 		},
 		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
-		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ string, _ func() time.Time) {
 			<-ctx.Done()
 			mu.Lock()
 			cancelCalled = true
@@ -636,7 +636,7 @@ func TestRunnerMail_HotReloadChangesSchedule(t *testing.T) {
 			return nil
 		},
 		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
-		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, mail config.MailSettings, _ func() time.Time) {
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, mail config.MailSettings, _ string, _ func() time.Time) {
 			mu.Lock()
 			callCount++
 			schedules = append(schedules, mail.Schedule)
@@ -722,7 +722,7 @@ func TestRunnerMail_HotReloadDetectsSmtpChanges(t *testing.T) {
 			return nil
 		},
 		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
-		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, mail config.MailSettings, _ func() time.Time) {
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, mail config.MailSettings, _ string, _ func() time.Time) {
 			mu.Lock()
 			callCount++
 			smtpHosts = append(smtpHosts, mail.SMTPHost)
@@ -771,7 +771,7 @@ func TestRunnerMail_NilEnabledNotStarted(t *testing.T) {
 			return nil
 		},
 		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
-		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ string, _ func() time.Time) {
 			mu.Lock()
 			callCount++
 			mu.Unlock()
@@ -821,7 +821,7 @@ func TestRunnerFreshInitSettings_NoAutoStart(t *testing.T) {
 			mu.Unlock()
 			return filepath.Join(tmp, "hb-logs"), nil
 		},
-		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ string, _ func() time.Time) {
 			mu.Lock()
 			mailSchedulerCalled = true
 			mu.Unlock()
@@ -894,7 +894,7 @@ func TestRunnerHeartbeat_MailEnableDoesNotTriggerHeartbeat(t *testing.T) {
 			mu.Unlock()
 			return filepath.Join(tmp, "hb-logs"), nil
 		},
-		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ string, _ func() time.Time) {
 			mu.Lock()
 			mailSchedulerCalled = true
 			mu.Unlock()

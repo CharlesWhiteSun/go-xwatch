@@ -15,10 +15,39 @@ import (
 	"go-xwatch/internal/paths"
 )
 
+// sendModeImmediate / sendModeScheduled 分別代表「即時寄送」與「排程寄送」的模式標籤，
+// 用於動態組成郵件主旨，避免重複硬編碼。
+const (
+	sendModeImmediate = "(即時寄送)"
+	sendModeScheduled = "(排程寄送)"
+)
+
+// buildMailContent 依日誌是否存在與寄送模式，自動產生郵件主旨與內文。
+// 若日誌存在，即時模式主旨用空格分隔，排程模式用冒號分隔；兩種模式的內文格式相同。
+// 回傳 attachmentMissing=true 表示無日誌，呼叫端應省略附件。
+func buildMailContent(rootDirName, dayStr, logPath, mode string) (subject, body string, attachmentMissing bool) {
+	info, err := os.Stat(logPath)
+	logMissing := err != nil || info.Size() == 0
+
+	if logMissing {
+		subject = fmt.Sprintf("%s 資料夾監控日誌%s: %s 無資料夾異動紀錄", rootDirName, mode, dayStr)
+		body = fmt.Sprintf("您好，%s %s 無資料夾異動之紀錄，特此通知。", rootDirName, dayStr)
+		return subject, body, true
+	}
+	// 有日誌：即時模式以空格連接，排程模式以冒號連接
+	if mode == sendModeImmediate {
+		subject = fmt.Sprintf("%s 資料夾監控日誌%s %s 已撈出資料，詳如內文", rootDirName, mode, dayStr)
+	} else {
+		subject = fmt.Sprintf("%s 資料夾監控日誌%s: %s 已撈出資料，詳如內文", rootDirName, mode, dayStr)
+	}
+	body = fmt.Sprintf("您好，附件為 %s %s 之資料夾監控日誌壓縮檔，請卓參。", rootDirName, dayStr)
+	return subject, body, false
+}
+
 // runMailScheduler 依設定的 HH:MM 時間每日寄信。
 // 流程：計算下次寄信時間 → 等待 → 寄信 → 重複。
 // 不寫任何「排程中」或「心跳」日誌；mail log 只記錄實際寄信結果（ok / fail）。
-func runMailScheduler(ctx context.Context, logger *slog.Logger, mail config.MailSettings, now func() time.Time) {
+func runMailScheduler(ctx context.Context, logger *slog.Logger, mail config.MailSettings, rootDir string, now func() time.Time) {
 	if now == nil {
 		now = time.Now
 	}
@@ -55,7 +84,7 @@ func runMailScheduler(ctx context.Context, logger *slog.Logger, mail config.Mail
 			timer.Stop()
 			return
 		case <-timer.C:
-			if err := sendDailyMail(ctx, logger, mail, loc, now(), nil); err != nil {
+			if err := sendDailyMail(ctx, logger, mail, rootDir, loc, now(), nil); err != nil {
 				logger.Error(fmt.Sprintf("每日寄信失敗：%v", err))
 			}
 		}
@@ -80,7 +109,7 @@ func nextSendTime(now time.Time, schedule string, loc *time.Location) (time.Time
 	return target, nil
 }
 
-func sendDailyMail(ctx context.Context, logger *slog.Logger, mail config.MailSettings, loc *time.Location, now time.Time, sendFn mailer.SendMailFunc) error {
+func sendDailyMail(ctx context.Context, logger *slog.Logger, mail config.MailSettings, rootDir string, loc *time.Location, now time.Time, sendFn mailer.SendMailFunc) error {
 	if len(mail.To) == 0 {
 		return errors.New("未設定收件人，無法寄送")
 	}
@@ -94,11 +123,13 @@ func sendDailyMail(ctx context.Context, logger *slog.Logger, mail config.MailSet
 		mailLogDir = logDir
 	}
 
-	subject := renderWithDay(mail.Subject, dayStr, fmt.Sprintf("XWatch 前一日監控日誌 %s", dayStr))
+	// 取監控主目錄名稱作為郵件主旨與內文的識別前綴
+	rootDirName := filepath.Base(strings.TrimSpace(rootDir))
+	if rootDirName == "" || rootDirName == "." {
+		rootDirName = "XWatch"
+	}
 	logPath := filepath.Join(logDir, fmt.Sprintf("watch_%s.log", dayStr))
-	defaultBody := fmt.Sprintf("附件為 %s 的監控日誌。", dayStr)
-	missingBody := fmt.Sprintf("沒有可用的監控日誌（%s），未附檔。", dayStr)
-	body, attachmentMissing := prepareBody(logPath, dayStr, mail.Body, defaultBody, missingBody)
+	subject, body, attachmentMissing := buildMailContent(rootDirName, dayStr, logPath, sendModeScheduled)
 
 	recipients := normalizeList(mail.To)
 	if len(recipients) == 0 {

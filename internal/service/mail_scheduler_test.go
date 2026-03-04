@@ -64,7 +64,7 @@ func TestSendDailyMail_SucceedsFirstAttempt(t *testing.T) {
 	loc := time.UTC
 	now := time.Date(2026, 3, 3, 10, 0, 0, 0, loc)
 
-	err := sendDailyMail(context.Background(), logger, mail, loc, now, fn)
+	err := sendDailyMail(context.Background(), logger, mail, mail.LogDir, loc, now, fn)
 	if err != nil {
 		t.Fatalf("expected success on first attempt, got: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestSendDailyMail_RetrySucceedsOnSecondAttempt(t *testing.T) {
 	now := time.Date(2026, 3, 3, 10, 0, 0, 0, loc)
 
 	start := time.Now()
-	err := sendDailyMail(context.Background(), logger, mail, loc, now, fn)
+	err := sendDailyMail(context.Background(), logger, mail, mail.LogDir, loc, now, fn)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -114,7 +114,7 @@ func TestSendDailyMail_RetryExhausted(t *testing.T) {
 	loc := time.UTC
 	now := time.Date(2026, 3, 3, 10, 0, 0, 0, loc)
 
-	err := sendDailyMail(context.Background(), logger, mail, loc, now, alwaysFail)
+	err := sendDailyMail(context.Background(), logger, mail, mail.LogDir, loc, now, alwaysFail)
 	if err == nil {
 		t.Fatal("expected error after all retries exhausted, got nil")
 	}
@@ -141,7 +141,7 @@ func TestSendDailyMail_ContextCancelledDuringRetry(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	err := sendDailyMail(ctx, logger, mail, loc, now, alwaysFail)
+	err := sendDailyMail(ctx, logger, mail, mail.LogDir, loc, now, alwaysFail)
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -253,7 +253,7 @@ func TestSendDailyMail_FailLogShowsAttachmentStatus(t *testing.T) {
 	})
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	sendErr := sendDailyMail(context.Background(), logger, mail, time.UTC, now, alwaysFail)
+	sendErr := sendDailyMail(context.Background(), logger, mail, tmp, time.UTC, now, alwaysFail)
 	if sendErr == nil {
 		t.Fatal("預期寄信失敗，但回傳 nil")
 	}
@@ -297,7 +297,7 @@ func TestRunMailScheduler_NoScheduledEntryInMailLog(t *testing.T) {
 	// 排程時間 23:59，不會在測試期間觸發；ctx 逾時後 scheduler 結束
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	runMailScheduler(ctx, logger, mail, time.Now)
+	runMailScheduler(ctx, logger, mail, tmp, time.Now)
 
 	// mail log 不應含 scheduled 或 heartbeat 記錄
 	entries, err := os.ReadDir(tmp)
@@ -377,7 +377,7 @@ func TestRunMailScheduler_DoesNotSendImmediately(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	runMailScheduler(ctx, logger, mail, nowFn)
+	runMailScheduler(ctx, logger, mail, tmp, nowFn)
 
 	// 若有實際寄信，mail log 應有 ok 或 fail 記錄
 	entries, _ := os.ReadDir(tmp)
@@ -410,7 +410,7 @@ func TestRunMailScheduler_NoHeartbeatFileCreated(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	runMailScheduler(ctx, logger, mail, time.Now)
+	runMailScheduler(ctx, logger, mail, tmp, time.Now)
 
 	// heartbeat 檔案（格式：heartbeat_YYYY-MM-DD.log）絕對不應出現
 	entries, _ := os.ReadDir(tmp)
@@ -418,5 +418,106 @@ func TestRunMailScheduler_NoHeartbeatFileCreated(t *testing.T) {
 		if strings.HasPrefix(e.Name(), "heartbeat_") {
 			t.Fatalf("mail 排程器不應產生 heartbeat 檔案，但找到：%s", e.Name())
 		}
+	}
+}
+
+// ── buildMailContent 單元測試 ─────────────────────────────────────────────────
+
+func TestServiceBuildMailContent_LogMissing_Immediate(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "watch_2026-03-02.log") // 不存在
+
+	subject, body, missing := buildMailContent("MyProject", "2026-03-02", logPath, sendModeImmediate)
+
+	if !missing {
+		t.Fatal("日誌不存在時 attachmentMissing 應為 true")
+	}
+	if !strings.Contains(subject, "無資料夾異動紀錄") {
+		t.Errorf("主旨應含「無資料夾異動紀錄」，實際：%q", subject)
+	}
+	if !strings.Contains(subject, sendModeImmediate) {
+		t.Errorf("主旨應含模式標籤 %q，實際：%q", sendModeImmediate, subject)
+	}
+	if !strings.Contains(body, "特此通知") {
+		t.Errorf("內文應含「特此通知」，實際：%q", body)
+	}
+}
+
+func TestServiceBuildMailContent_LogMissing_Scheduled(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "watch_2026-03-02.log")
+
+	subject, body, missing := buildMailContent("MyProject", "2026-03-02", logPath, sendModeScheduled)
+
+	if !missing {
+		t.Fatal("日誌不存在時 attachmentMissing 應為 true")
+	}
+	if !strings.Contains(subject, "無資料夾異動紀錄") {
+		t.Errorf("主旨應含「無資料夾異動紀錄」，實際：%q", subject)
+	}
+	if !strings.Contains(subject, sendModeScheduled) {
+		t.Errorf("主旨應含模式標籤 %q，實際：%q", sendModeScheduled, subject)
+	}
+	if !strings.Contains(body, "特此通知") {
+		t.Errorf("內文應含「特此通知」，實際：%q", body)
+	}
+}
+
+func TestServiceBuildMailContent_EmptyLog_TreatedAsMissing(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "watch_2026-03-02.log")
+	if err := os.WriteFile(logPath, []byte{}, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	_, _, missing := buildMailContent("MyProject", "2026-03-02", logPath, sendModeImmediate)
+	if !missing {
+		t.Fatal("空日誌檔應被視為 missing，attachmentMissing 應為 true")
+	}
+}
+
+func TestServiceBuildMailContent_LogExists_Immediate_NoColon(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "watch_2026-03-02.log")
+	if err := os.WriteFile(logPath, []byte("some log data"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	subject, body, missing := buildMailContent("MyProject", "2026-03-02", logPath, sendModeImmediate)
+
+	if missing {
+		t.Fatal("日誌存在時 attachmentMissing 應為 false")
+	}
+	if strings.Contains(subject, ":") {
+		t.Errorf("即時模式有日誌時主旨不應有冒號，實際：%q", subject)
+	}
+	if !strings.Contains(subject, "已撈出資料") {
+		t.Errorf("主旨應含「已撈出資料」，實際：%q", subject)
+	}
+	if !strings.Contains(body, "壓縮檔") {
+		t.Errorf("內文應含「壓縮檔」，實際：%q", body)
+	}
+}
+
+func TestServiceBuildMailContent_LogExists_Scheduled_HasColon(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "watch_2026-03-02.log")
+	if err := os.WriteFile(logPath, []byte("some log data"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	subject, body, missing := buildMailContent("MyProject", "2026-03-02", logPath, sendModeScheduled)
+
+	if missing {
+		t.Fatal("日誌存在時 attachmentMissing 應為 false")
+	}
+	if !strings.Contains(subject, ":") {
+		t.Errorf("排程模式有日誌時主旨應有冒號，實際：%q", subject)
+	}
+	if !strings.Contains(subject, "已撈出資料") {
+		t.Errorf("主旨應含「已撈出資料」，實際：%q", subject)
+	}
+	if !strings.Contains(body, "壓縮檔") {
+		t.Errorf("內文應含「壓縮檔」，實際：%q", body)
 	}
 }

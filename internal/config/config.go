@@ -30,8 +30,6 @@ const (
 
 type Settings struct {
 	RootDir           string       `json:"rootDir"`
-	DailyCSVEnabled   bool         `json:"dailyCsvEnabled"`
-	DailyCSVDir       string       `json:"dailyCsvDir"`
 	HeartbeatEnabled  bool         `json:"heartbeatEnabled"`
 	HeartbeatInterval int          `json:"heartbeatInterval"`
 	Mail              MailSettings `json:"mail"`
@@ -119,10 +117,6 @@ func ValidateAndFillDefaults(s Settings) (Settings, error) {
 		return s, err
 	}
 	s.RootDir = absRoot
-
-	if s.DailyCSVEnabled && strings.TrimSpace(s.DailyCSVDir) == "" {
-		s.DailyCSVDir = "daily"
-	}
 
 	if s.HeartbeatInterval <= 0 {
 		s.HeartbeatInterval = DefaultHeartbeatInterval

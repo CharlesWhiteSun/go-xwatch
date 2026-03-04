@@ -497,3 +497,152 @@ func TestPrintMailHelp_RemovedAddToFlagExample(t *testing.T) {
 		t.Errorf("help 輸出應仍含 'mail add-to a@example.com,b@example.com' 範例，實際輸出：\n%s", out)
 	}
 }
+
+// ── buildMailContent 單元測試 ─────────────────────────────────────────────────
+
+func TestBuildMailContent_LogMissing_Immediate(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "watch_2026-03-02.log") // 不存在
+
+	subject, body, missing := buildMailContent("MyProject", "2026-03-02", logPath, sendModeImmediate)
+
+	if !missing {
+		t.Fatal("日誌不存在時 attachmentMissing 應為 true")
+	}
+	if !strings.Contains(subject, "無資料夾異動紀錄") {
+		t.Errorf("主旨應含「無資料夾異動紀錄」，實際：%q", subject)
+	}
+	if !strings.Contains(subject, sendModeImmediate) {
+		t.Errorf("主旨應含模式標籤 %q，實際：%q", sendModeImmediate, subject)
+	}
+	if !strings.Contains(subject, "MyProject") {
+		t.Errorf("主旨應含目錄名稱，實際：%q", subject)
+	}
+	if !strings.Contains(body, "特此通知") {
+		t.Errorf("內文應含「特此通知」，實際：%q", body)
+	}
+}
+
+func TestBuildMailContent_LogMissing_Scheduled(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "watch_2026-03-02.log")
+
+	subject, body, missing := buildMailContent("MyProject", "2026-03-02", logPath, sendModeScheduled)
+
+	if !missing {
+		t.Fatal("日誌不存在時 attachmentMissing 應為 true")
+	}
+	if !strings.Contains(subject, "無資料夾異動紀錄") {
+		t.Errorf("主旨應含「無資料夾異動紀錄」，實際：%q", subject)
+	}
+	if !strings.Contains(subject, sendModeScheduled) {
+		t.Errorf("主旨應含模式標籤 %q，實際：%q", sendModeScheduled, subject)
+	}
+	if !strings.Contains(body, "特此通知") {
+		t.Errorf("內文應含「特此通知」，實際：%q", body)
+	}
+}
+
+func TestBuildMailContent_EmptyLog_TreatedAsMissing(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "watch_2026-03-02.log")
+	// 建立空檔案（size=0）
+	if err := os.WriteFile(logPath, []byte{}, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	_, _, missing := buildMailContent("MyProject", "2026-03-02", logPath, sendModeImmediate)
+	if !missing {
+		t.Fatal("空日誌檔應被視為 missing，attachmentMissing 應為 true")
+	}
+}
+
+func TestBuildMailContent_LogExists_Immediate_NoColon(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "watch_2026-03-02.log")
+	if err := os.WriteFile(logPath, []byte("some log data"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	subject, body, missing := buildMailContent("MyProject", "2026-03-02", logPath, sendModeImmediate)
+
+	if missing {
+		t.Fatal("日誌存在時 attachmentMissing 應為 false")
+	}
+	// 即時模式：主旨不含冒號（用空格連接）
+	if strings.Contains(subject, ":") {
+		t.Errorf("即時模式有日誌時主旨不應有冒號，實際：%q", subject)
+	}
+	if !strings.Contains(subject, "已撈出資料") {
+		t.Errorf("主旨應含「已撈出資料」，實際：%q", subject)
+	}
+	if !strings.Contains(subject, sendModeImmediate) {
+		t.Errorf("主旨應含模式標籤 %q，實際：%q", sendModeImmediate, subject)
+	}
+	if !strings.Contains(body, "壓縮檔") {
+		t.Errorf("內文應含「壓縮檔」，實際：%q", body)
+	}
+}
+
+func TestBuildMailContent_LogExists_Scheduled_HasColon(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "watch_2026-03-02.log")
+	if err := os.WriteFile(logPath, []byte("some log data"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	subject, body, missing := buildMailContent("MyProject", "2026-03-02", logPath, sendModeScheduled)
+
+	if missing {
+		t.Fatal("日誌存在時 attachmentMissing 應為 false")
+	}
+	// 排程模式：主旨含冒號
+	if !strings.Contains(subject, ":") {
+		t.Errorf("排程模式有日誌時主旨應有冒號，實際：%q", subject)
+	}
+	if !strings.Contains(subject, "已撈出資料") {
+		t.Errorf("主旨應含「已撈出資料」，實際：%q", subject)
+	}
+	if !strings.Contains(subject, sendModeScheduled) {
+		t.Errorf("主旨應含模式標籤 %q，實際：%q", sendModeScheduled, subject)
+	}
+	if !strings.Contains(body, "壓縮檔") {
+		t.Errorf("內文應含「壓縮檔」，實際：%q", body)
+	}
+}
+
+func TestBuildMailContent_RootDirNameInSubjectAndBody(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "watch_2026-03-02.log")
+	if err := os.WriteFile(logPath, []byte("data"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	rootDirName := "UniqueProjectName"
+	subject, body, _ := buildMailContent(rootDirName, "2026-03-02", logPath, sendModeImmediate)
+
+	if !strings.Contains(subject, rootDirName) {
+		t.Errorf("主旨應含目錄名稱 %q，實際：%q", rootDirName, subject)
+	}
+	if !strings.Contains(body, rootDirName) {
+		t.Errorf("內文應含目錄名稱 %q，實際：%q", rootDirName, body)
+	}
+}
+
+func TestBuildMailContent_DayStrInSubjectAndBody(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "watch_2026-03-02.log")
+	if err := os.WriteFile(logPath, []byte("data"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	dayStr := "2026-03-02"
+	subject, body, _ := buildMailContent("Proj", dayStr, logPath, sendModeScheduled)
+
+	if !strings.Contains(subject, dayStr) {
+		t.Errorf("主旨應含日期字串 %q，實際：%q", dayStr, subject)
+	}
+	if !strings.Contains(body, dayStr) {
+		t.Errorf("內文應含日期字串 %q，實際：%q", dayStr, body)
+	}
+}

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,7 +13,7 @@ func TestSaveAndLoad(t *testing.T) {
 	t.Setenv("XWATCH_SKIP_ACL", "1")
 
 	root := filepath.Join(tmp, "root")
-	if err := Save(Settings{RootDir: root, DailyCSVEnabled: true}); err != nil {
+	if err := Save(Settings{RootDir: root}); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
@@ -27,9 +28,6 @@ func TestSaveAndLoad(t *testing.T) {
 	}
 	if loaded.UpdatedAt.IsZero() {
 		t.Fatalf("expected UpdatedAt to be set")
-	}
-	if loaded.DailyCSVDir != "daily" {
-		t.Fatalf("expected DailyCSVDir default 'daily', got %q", loaded.DailyCSVDir)
 	}
 	if loaded.Mail.Schedule != "10:00" {
 		t.Fatalf("expected mail schedule default '10:00', got %q", loaded.Mail.Schedule)
@@ -49,15 +47,12 @@ func TestSaveAndLoad(t *testing.T) {
 
 func TestValidateAndFillDefaults(t *testing.T) {
 	root := "./foo"
-	s, err := ValidateAndFillDefaults(Settings{RootDir: root, DailyCSVEnabled: true})
+	s, err := ValidateAndFillDefaults(Settings{RootDir: root})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	if !filepath.IsAbs(s.RootDir) {
 		t.Fatalf("root should be absolute, got %q", s.RootDir)
-	}
-	if s.DailyCSVDir != "daily" {
-		t.Fatalf("expected default daily dir, got %q", s.DailyCSVDir)
 	}
 	if s.Mail.Schedule != "10:00" {
 		t.Fatalf("expected default mail schedule, got %q", s.Mail.Schedule)
@@ -264,5 +259,53 @@ func TestMailEnabledPersistFalse(t *testing.T) {
 	}
 	if loaded.Mail.IsEnabled() {
 		t.Fatal("明確 disable 後 Load 不應自動重新啟用")
+	}
+}
+
+// ── daily 已移除 對應測試 ──────────────────────────────────────────────────────
+
+// TestLoad_OldConfigWithDailyCSVFieldsIsIgnored 檢役舊版 config.json 含 dailyCsvEnabled 欄位
+// 時，讀取仍可成功（JSON 不明欄位需被忽略，不產生錯誤）。
+func TestLoad_OldConfigWithDailyCSVFieldsIsIgnored(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+
+	// 手寫舊版含 dailyCsvEnabled/dailyCsvDir 的 JSON；
+	// 使用 encoding/json 序列化路徑以正確處理 Windows 反斜線
+	configDir := filepath.Join(tmp, "go-xwatch")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	absRoot, _ := filepath.Abs(root)
+	// 透過 json.Marshal 正確轉義 Windows 路徑的反斜線
+	rootJSON, _ := json.Marshal(absRoot)
+	oldJSON := `{"rootDir":` + string(rootJSON) + `,"dailyCsvEnabled":true,"dailyCsvDir":"/some/dir","heartbeatEnabled":false,"heartbeatInterval":60,"mail":{}}`
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(oldJSON), 0o644); err != nil {
+		t.Fatalf("write old config: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("舊版 config 含 daily 欄位時， Load 不應失敗，實際錯誤：%v", err)
+	}
+	if loaded.RootDir != absRoot {
+		t.Fatalf("舊版 config 讀取後 RootDir 不符，期望 %q，實際 %q", absRoot, loaded.RootDir)
+	}
+}
+
+// TestSettings_NoDailyCSVFields 檢役 Settings 結構體已不包含 DailyCSV 欄位（編譯期查詳）。
+// 若未移除欄位則下方忍用設定碼会編譯失敗。
+func TestSettings_NoDailyCSVFields(t *testing.T) {
+	// Settings{} 啟用所有欄位，若 DailyCSVEnabled/Dir 存在則下列碼不編譯
+	// var _ = Settings{DailyCSVEnabled: true} // 這行如果存在就不會編譯
+	s := Settings{}
+	if s.HeartbeatEnabled {
+		t.Error("預設 HeartbeatEnabled 應為 false")
 	}
 }

@@ -178,3 +178,36 @@ func TestRequireServiceInstalled_NotInstalled_ErrorContainsHint(t *testing.T) {
 		t.Errorf("錯誤訊息應包含功能名稱，實際：%v", err)
 	}
 }
+
+// ── daily 指令已移除 相關測試 ────────────────────────────────────────────
+
+// TestDailyCommand_NotRegistered 檢役 daily 指令已從指令表中移除。
+func TestDailyCommand_NotRegistered(t *testing.T) {
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+	reg := app.buildCommandRegistry()
+	if _, ok := reg.Get("daily"); ok {
+		t.Error("daily 指令應已移除，但註冊表中仍存在")
+	}
+}
+
+// TestDailyCommand_KnownCommandsDoNotIncludeDaily 檢查所有已知指令中不包含 daily。
+func TestDailyCommand_KnownCommandsDoNotIncludeDaily(t *testing.T) {
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+	reg := app.buildCommandRegistry()
+	// 確保主要指令仍存在
+	for _, name := range []string{"mail", "heartbeat", "export"} {
+		if _, ok := reg.Get(name); !ok {
+			t.Errorf("指令 %q 應存在但未找到", name)
+		}
+	}
+	// daily 不應存在
+	if _, ok := reg.Get("daily"); ok {
+		t.Error("daily 指令應已移除")
+	}
+}

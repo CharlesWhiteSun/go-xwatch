@@ -27,11 +27,11 @@ type Runner struct {
 	WatcherFn               func(ctx context.Context, root string, logger *slog.Logger, onEvent func(watcher.Event)) error
 	Sinks                   []pipeline.EventSink
 	Now                     func() time.Time
-	HeartbeatLogDirFn       func() (string, error)                                                                         // 測試時可覆寫，預設使用 heartbeat.DefaultLogDir
-	ConfigLoadFn            func() (config.Settings, error)                                                                // 測試時可覆寫，預設使用 config.Load
-	HeartbeatReloadInterval time.Duration                                                                                  // 心跳熱重載間隔，預設 30s，測試時可縮短
-	MailReloadInterval      time.Duration                                                                                  // 郵件排程熱重載間隔，預設 30s，測試時可縮短
-	MailSchedulerFn         func(ctx context.Context, logger *slog.Logger, mail config.MailSettings, now func() time.Time) // 測試時可覆寫，預設使用 runMailScheduler
+	HeartbeatLogDirFn       func() (string, error)                                                                                         // 測試時可覆寫，預設使用 heartbeat.DefaultLogDir
+	ConfigLoadFn            func() (config.Settings, error)                                                                                // 測試時可覆寫，預設使用 config.Load
+	HeartbeatReloadInterval time.Duration                                                                                                  // 心跳熱重載間隔，預設 30s，測試時可縮短
+	MailReloadInterval      time.Duration                                                                                                  // 郵件排程熱重載間隔，預設 30s，測試時可縮短
+	MailSchedulerFn         func(ctx context.Context, logger *slog.Logger, mail config.MailSettings, rootDir string, now func() time.Time) // 測試時可覆寫，預設使用 runMailScheduler
 }
 
 func (r *Runner) Run(ctx context.Context) error {
@@ -169,22 +169,6 @@ func (r *Runner) buildSinks(dataDir string, logger *slog.Logger) ([]pipeline.Eve
 		}),
 	}
 
-	if r.Settings.DailyCSVEnabled {
-		dir := r.Settings.DailyCSVDir
-		if dir == "" {
-			dir = filepath.Join(dataDir, "daily")
-		} else if !filepath.IsAbs(dir) {
-			dir = filepath.Join(dataDir, dir)
-		}
-		dailySink, err := pipeline.NewDailyFileSink(dir, pipeline.NewCSVRecorder)
-		if err != nil {
-			logger.Error(fmt.Sprintf("建立每日 CSV 寫入器失敗（目錄：%s）：%v", dir, err))
-		} else {
-			sinks = append(sinks, pipeline.NewBufferedSink(dailySink, 5*time.Second, 1024))
-			logger.Info(fmt.Sprintf("已啟用每日 CSV 輸出，位置：%s", dir))
-		}
-	}
-
 	return sinks, closeAll, nil
 }
 
@@ -287,7 +271,7 @@ func (r *Runner) runMailSchedulerManager(ctx context.Context, logger *slog.Logge
 		}
 		mailCtx, cancel := context.WithCancel(ctx)
 		mailCancel = cancel
-		go r.mailSchedulerFn()(mailCtx, logger, s.Mail, time.Now)
+		go r.mailSchedulerFn()(mailCtx, logger, s.Mail, s.RootDir, time.Now)
 		logger.Info(fmt.Sprintf("已啟用郵件排程器，排程時間：%s", s.Mail.Schedule))
 	}
 
@@ -387,7 +371,7 @@ func (r *Runner) heartbeatLogDir() (string, error) {
 	return heartbeat.DefaultLogDir()
 }
 
-func (r *Runner) mailSchedulerFn() func(ctx context.Context, logger *slog.Logger, mail config.MailSettings, now func() time.Time) {
+func (r *Runner) mailSchedulerFn() func(ctx context.Context, logger *slog.Logger, mail config.MailSettings, rootDir string, now func() time.Time) {
 	if r.MailSchedulerFn != nil {
 		return r.MailSchedulerFn
 	}

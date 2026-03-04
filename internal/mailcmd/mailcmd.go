@@ -15,6 +15,35 @@ import (
 	"go-xwatch/internal/paths"
 )
 
+// sendModeImmediate / sendModeScheduled 分別代表「即時寄送」與「排程寄送」的模式標籤，
+// 用於動態組成郵件主旨，避免重複硬編碼。
+const (
+	sendModeImmediate = "(即時)"
+	sendModeScheduled = "(排程)"
+)
+
+// buildMailContent 依日誌是否存在與寄送模式，自動產生郵件主旨與內文。
+// 若日誌存在，即時模式主旨用空格分隔，排程模式用冒號分隔；兩種模式的內文格式相同。
+// 回傳 attachmentMissing=true 表示無日誌，呼叫端應省略附件。
+func buildMailContent(rootDirName, dayStr, logPath, mode string) (subject, body string, attachmentMissing bool) {
+	info, err := os.Stat(logPath)
+	logMissing := err != nil || info.Size() == 0
+
+	if logMissing {
+		subject = fmt.Sprintf("%s 資料夾監控日誌%s: %s 無資料夾異動紀錄", rootDirName, mode, dayStr)
+		body = fmt.Sprintf("您好，%s %s 無資料夾異動之紀錄，特此通知。", rootDirName, dayStr)
+		return subject, body, true
+	}
+	// 有日誌：即時模式以空格連接，排程模式以冒號連接
+	if mode == sendModeImmediate {
+		subject = fmt.Sprintf("%s 資料夾監控日誌%s %s 已撈出資料，詳如內文", rootDirName, mode, dayStr)
+	} else {
+		subject = fmt.Sprintf("%s 資料夾監控日誌%s: %s 已撈出資料，詳如內文", rootDirName, mode, dayStr)
+	}
+	body = fmt.Sprintf("您好，附件為 %s %s 之資料夾監控日誌壓縮檔，請卓參。", rootDirName, dayStr)
+	return subject, body, false
+}
+
 // Run handles mail subcommands.
 func Run(args []string) error {
 	if len(args) == 0 {
@@ -187,12 +216,7 @@ func sendWithGmailFn(args []string, gmailFn func(ctx context.Context, cfg mailer
 	if v := strings.TrimSpace(*toFlag); v != "" {
 		mail.To = splitList(v)
 	}
-	if v := strings.TrimSpace(*subjectFlag); v != "" {
-		mail.Subject = v
-	}
-	if v := strings.TrimSpace(*bodyFlag); v != "" {
-		mail.Body = v
-	}
+	// --subject / --body 旗標不直接寫入 mail，改在 buildMailContent 之後覆蓋
 	if v := strings.TrimSpace(*logDirFlag); v != "" {
 		mail.LogDir = makeAbsPath(v)
 	}
@@ -232,11 +256,20 @@ func sendWithGmailFn(args []string, gmailFn func(ctx context.Context, cfg mailer
 		mailLogDir = logDir
 	}
 
-	subject := renderWithDay(mail.Subject, dayStr, fmt.Sprintf("XWatch 前一日監控日誌 %s", dayStr))
+	// 取監控主目錄名稱作為郵件主旨與內文的識別前綴
+	rootDirName := filepath.Base(strings.TrimSpace(settings.RootDir))
+	if rootDirName == "" || rootDirName == "." {
+		rootDirName = "XWatch"
+	}
 	logPath := filepath.Join(logDir, fmt.Sprintf("watch_%s.log", dayStr))
-	defaultBody := fmt.Sprintf("附件為 %s 的監控日誌。", dayStr)
-	missingBody := fmt.Sprintf("沒有可用的監控日誌（%s），未附檔。", dayStr)
-	body, attachmentMissing := prepareBody(logPath, dayStr, mail.Body, defaultBody, missingBody)
+	subject, body, attachmentMissing := buildMailContent(rootDirName, dayStr, logPath, sendModeImmediate)
+	// 若使用者明確提供 --subject 或 --body 旗標，以旗標值覆蓋自動產生的內容
+	if v := strings.TrimSpace(*subjectFlag); v != "" {
+		subject = v
+	}
+	if v := strings.TrimSpace(*bodyFlag); v != "" {
+		body = v
+	}
 
 	recipients := normalizeList(mail.To)
 	if len(recipients) == 0 {
@@ -358,7 +391,7 @@ func printMailHelp(now time.Time) {
 	fmt.Println()
 	fmt.Println("常用流程：")
 	fmt.Println("  1) 設定並啟用： mail enable --to a@example.com --user smtp_user --pass smtp_pass")
-	fmt.Println("  2) 調整設定：   mail set --schedule 10:00 --tz Asia/Taipei --subject 'XWatch 日誌 {day}'")
+	fmt.Println("  2) 調整設定：   mail set --schedule 10:00 --tz Asia/Taipei")
 	fmt.Println("  3) 查看設定：   mail status")
 	fmt.Println("  4) 立即寄送：   mail send [--day YYYY-MM-DD]")
 	fmt.Println()
@@ -373,8 +406,8 @@ func printMailHelp(now time.Time) {
 	fmt.Println()
 	fmt.Println("常用 flags：")
 	fmt.Println("  --to a@b,c@d       (set/enable) 覆蓋收件人清單；(add-to) 追加收件人")
-	fmt.Println("  --subject TEXT      郵件主旨，可用 {day} 代入日期")
-	fmt.Println("  --body TEXT         郵件內容，可用 {day} 代入日期")
+	fmt.Println("  --subject TEXT      覆蓋自動產生的郵件主旨（send 指令專用）")
+	fmt.Println("  --body TEXT         覆蓋自動產生的郵件內容（send 指令專用）")
 	fmt.Println("  --log-dir PATH      watch log 來源目錄，預設 %ProgramData%/go-xwatch/xwatch-watch-logs")
 	fmt.Println("  --mail-log-dir PATH 寄信紀錄目錄，預設 %ProgramData%/go-xwatch/xwatch-mail-logs")
 	fmt.Println("  --schedule HH:MM    每日寄送時間，預設 10:00 (24 小時制)")
@@ -386,9 +419,14 @@ func printMailHelp(now time.Time) {
 	fmt.Println("  --from NAME         寄件者，預設同 SMTP 帳號")
 	fmt.Println("  --day YYYY-MM-DD    立即發送寄送日期之日誌")
 	fmt.Println()
-	fmt.Println("附檔/正文規則：")
-	fmt.Println("  - 會尋找 watch_YYYY-MM-DD.log；檔案不存在或為空時不附檔，正文會提示未附檔。")
-	fmt.Println("  - 主旨/內容的 {day} 會替換成日期。預設主旨：XWatch 前一日監控日誌 YYYY-MM-DD。")
+	fmt.Println("附檔/主旨/正文規則：")
+	fmt.Println("  - 會尋找 watch_YYYY-MM-DD.log；檔案不存在或為空時不附檔。")
+	fmt.Println("  - 主旨與內文依日誌是否存在自動產生（含監控目錄名稱與寄送模式標籤）：")
+	fmt.Println("    有日誌(即時)  主旨：{目錄} 資料夾監控日誌(即時) {日期} 已撈出資料，詳如內文")
+	fmt.Println("    無日誌(即時)  主旨：{目錄} 資料夾監控日誌(即時): {日期} 無資料夾異動紀錄")
+	fmt.Println("    有日誌(排程)  主旨：{目錄} 資料夾監控日誌(排程): {日期} 已撈出資料，詳如內文")
+	fmt.Println("    無日誌(排程)  主旨：{目錄} 資料夾監控日誌(排程): {日期} 無資料夾異動紀錄")
+	fmt.Println("  - 可用 --subject / --body 旗標覆蓋自動產生的主旨/內文。")
 	fmt.Println()
 	fmt.Println("範例：")
 	fmt.Println("  mail enable --to boss@example.com --user smtp_user --pass smtp_pass")
