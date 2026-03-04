@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -25,7 +24,6 @@ import (
 	"go-xwatch/internal/mailcmd"
 	"go-xwatch/internal/paths"
 	"go-xwatch/internal/service"
-	"go-xwatch/internal/watcher"
 
 	"golang.org/x/sys/windows"
 )
@@ -202,6 +200,10 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 	}})
 
 	reg.Register(cli.CommandFunc{CommandName: "init", Fn: func(args []string) error {
+		if len(args) > 0 && strings.ToLower(args[0]) == "help" {
+			printInitHelp()
+			return nil
+		}
 		fs := flag.NewFlagSet("init", flag.ContinueOnError)
 		rootFlag := fs.String("root", "", "watch root directory (default: exe directory)")
 		installFlag := fs.Bool("install-service", false, "install and start Windows service after init")
@@ -231,24 +233,28 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 		return nil
 	}})
 
-	reg.Register(cli.CommandFunc{CommandName: "uninstall", Fn: func(_ []string) error {
-		if err := service.Uninstall(c.serviceName); err != nil {
-			return err
-		}
-		fmt.Println("服務已移除。")
-		return nil
+	reg.Register(cli.CommandFunc{CommandName: "remove", Fn: func(_ []string) error {
+		return c.stopAndUninstall()
 	}})
 
-	cleanupFn := func([]string) error { return c.stopAndUninstall() }
-	reg.Register(cli.CommandFunc{CommandName: "cleanup", Fn: cleanupFn})
-	reg.Register(cli.CommandFunc{CommandName: "remove", Fn: cleanupFn})
-
-	clearFn := func([]string) error { return c.clearJournal() }
-	reg.Register(cli.CommandFunc{CommandName: "clear", Fn: clearFn})
-	reg.Register(cli.CommandFunc{CommandName: "purge", Fn: clearFn})
-	reg.Register(cli.CommandFunc{CommandName: "wipe", Fn: clearFn})
+	reg.Register(cli.CommandFunc{CommandName: "db", Fn: func(args []string) error {
+		if len(args) == 0 || strings.ToLower(args[0]) == "help" {
+			printDBHelp()
+			return nil
+		}
+		switch strings.ToLower(args[0]) {
+		case "clear":
+			return c.clearJournal()
+		default:
+			return fmt.Errorf("db: 未知子指令 %q，請執行 'db help' 查看說明", args[0])
+		}
+	}})
 
 	reg.Register(cli.CommandFunc{CommandName: "export", Fn: func(args []string) error {
+		if len(args) > 0 && strings.ToLower(args[0]) == "help" {
+			printExportHelp()
+			return nil
+		}
 		fs := flag.NewFlagSet("export", flag.ContinueOnError)
 		sinceFlag := fs.String("since", "", "RFC3339 timestamp filter for export")
 		untilFlag := fs.String("until", "", "optional RFC3339 upper bound for export")
@@ -279,21 +285,6 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 			}
 		}
 		return heartbeatcmd.Run(args)
-	}})
-
-	reg.Register(cli.CommandFunc{CommandName: "run", Fn: func(args []string) error {
-		fs := flag.NewFlagSet("run", flag.ContinueOnError)
-		rootFlag := fs.String("root", "", "watch root directory (default: exe directory)")
-		if err := fs.Parse(args); err != nil {
-			return err
-		}
-		root, err := c.resolveRoot(*rootFlag)
-		if err != nil {
-			return err
-		}
-		logger := watcher.NewLogger(os.Stdout)
-		logger.Info("前景模式啟動", slog.String("根目錄", root))
-		return watcher.Run(nil, root, logger, nil)
 	}})
 
 	return reg
@@ -474,27 +465,120 @@ func (c *cliApp) printUsage() {
 	fmt.Printf("   - version: %s\n", c.version)
 	fmt.Println()
 	fmt.Println("============================================================")
-	fmt.Println("help 指令列表:")
+	fmt.Println("指令列表：")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "  init [-root PATH] [--install-service]\t初始化設定；加上 --install-service 會註冊並啟動服務")
-	fmt.Fprintln(w, "  status\t顯示服務狀態、路徑與事件筆數")
-	fmt.Fprintln(w, "  start | stop\t啟動或停止服務")
-	fmt.Fprintln(w, "  uninstall\t移除服務")
-	fmt.Fprintln(w, "  cleanup | remove\t停止並移除服務")
-	fmt.Fprintln(w, "  clear | purge | wipe\t清空事件資料庫 (需權限)")
-	fmt.Fprintln(w, "  export [flags]\t匯出事件，flags:")
-	fmt.Fprintln(w, "    --since RFC3339\t起始時間 (預設不限)")
-	fmt.Fprintln(w, "    --until RFC3339\t結束時間 (預設不限)")
-	fmt.Fprintln(w, "    --limit N\t最大筆數 (預設 1000)")
-	fmt.Fprintln(w, "    --all\t匯出所有事件，忽略時間條件")
-	fmt.Fprintln(w, "    --format json|jsonl|text\t匯出格式 (預設 json)")
-	fmt.Fprintln(w, "    --bom\t輸出 UTF-8 BOM 以供記事本辨識中文")
-	fmt.Fprintln(w, "    --out PATH\t輸出檔路徑，'-' 為 stdout，預設 %ProgramData%/go-xwatch")
-	fmt.Fprintln(w, "  mail <subcommand> [flags]\t管理郵件寄送 (status/enable/disable/set/send)")
-	fmt.Fprintln(w, "  heartbeat <subcommand> [flags]\t管理心跳測試 (status/start/stop/set)")
-	fmt.Fprintln(w, "  run [-root PATH]\t前景模式執行，不作為服務")
+	fmt.Fprintln(w, "  init [--root PATH] [--install-service]\t初始化監控設定（執行 'init help' 查看詳細說明）")
+	fmt.Fprintln(w, "  status\t顯示服務狀態、版本與設定摘要")
+	fmt.Fprintln(w, "  start | stop\t啟動或停止 Windows 服務")
+	fmt.Fprintln(w, "  remove\t停止並移除服務（同步停用心跳與郵件排程）")
+	fmt.Fprintln(w, "  db <subcommand>\t管理事件資料庫（執行 'db help' 查看詳細說明）")
+	fmt.Fprintln(w, "  export [flags]\t匯出監控事件記錄（執行 'export help' 查看詳細說明）")
+	fmt.Fprintln(w, "  mail <subcommand> [flags]\t管理郵件寄送（執行 'mail help' 查看詳細說明）")
+	fmt.Fprintln(w, "  heartbeat <subcommand> [flags]\t管理心跳測試（執行 'heartbeat help' 查看詳細說明）")
 	_ = w.Flush()
 	fmt.Println("============================================================")
+}
+
+// printInitHelp 顯示 init 指令的詳細說明。
+func printInitHelp() {
+	fmt.Println()
+	fmt.Println("init — 初始化 XWatch 監控設定")
+	fmt.Println()
+	fmt.Println("用法：")
+	fmt.Println("  init [--root PATH] [--install-service]")
+	fmt.Println()
+	fmt.Println("參數說明：")
+	w := tabwriter.NewWriter(os.Stdout, 2, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "  --root PATH\t指定監控根目錄（絕對或相對路徑）。")
+	fmt.Fprintln(w, "  \t省略時以執行檔所在目錄作為根目錄。")
+	fmt.Fprintln(w, "  --install-service\t初始化完成後同時將 XWatch 註冊為 Windows 服務並立即啟動。")
+	fmt.Fprintln(w, "  \t若服務已存在則更新設定後重新啟動。")
+	_ = w.Flush()
+	fmt.Println()
+	fmt.Println("執行步驟：")
+	fmt.Println("  [1/3] 確認根目錄存在（不存在時詢問是否自動建立）")
+	fmt.Println("  [2/3] 將設定寫入 %ProgramData%\\go-xwatch\\config.json")
+	fmt.Println("  [3/3] 若加入 --install-service：向 Windows SCM 註冊服務並啟動")
+	fmt.Println()
+	fmt.Println("範例：")
+	fmt.Println("  # 使用執行檔目錄作為根目錄（僅寫入設定，不安裝服務）")
+	fmt.Println("  xwatch init")
+	fmt.Println()
+	fmt.Println("  # 指定目錄並安裝服務（需以系統管理員執行）")
+	fmt.Println("  xwatch init --root D:\\data\\watch --install-service")
+	fmt.Println()
+	fmt.Println("  # 已有服務時重新指定根目錄")
+	fmt.Println("  xwatch init --root D:\\new-data --install-service")
+	fmt.Println()
+	fmt.Println("注意事項：")
+	fmt.Println("  - 安裝 Windows 服務需要系統管理員權限")
+	fmt.Println("  - 根目錄不存在時程式會詢問是否自動建立")
+	fmt.Println("  - 重複執行 init 不會清除已有的事件資料庫")
+}
+
+// printDBHelp 顯示 db 指令的詳細說明。
+func printDBHelp() {
+	fmt.Println()
+	fmt.Println("db — 管理 XWatch 事件資料庫")
+	fmt.Println()
+	fmt.Println("用法：")
+	fmt.Println("  db <subcommand>")
+	fmt.Println()
+	fmt.Println("子指令：")
+	w := tabwriter.NewWriter(os.Stdout, 2, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "  clear\t清除所有事件記錄（操作不可逆）")
+	fmt.Fprintln(w, "  help\t顯示本說明")
+	_ = w.Flush()
+	fmt.Println()
+	fmt.Println("範例：")
+	fmt.Println("  # 清除所有事件記錄")
+	fmt.Println("  xwatch db clear")
+	fmt.Println()
+	fmt.Println("注意事項：")
+	fmt.Println("  - db clear 執行前會先停止 Windows 服務，完成後服務不會自動重啟")
+	fmt.Println("  - 清除操作不可復原，請確認後再執行")
+	fmt.Println("  - 需要系統管理員權限")
+}
+
+// printExportHelp 顯示 export 指令的詳細說明。
+func printExportHelp() {
+	fmt.Println()
+	fmt.Println("export — 匯出 XWatch 監控事件記錄")
+	fmt.Println()
+	fmt.Println("用法：")
+	fmt.Println("  export [--since TIME] [--until TIME] [--limit N] [--format TYPE] [--all] [--bom] [--out PATH]")
+	fmt.Println()
+	fmt.Println("參數說明：")
+	w := tabwriter.NewWriter(os.Stdout, 2, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "  --since RFC3339\t篩選起始時間，採 RFC3339 格式（如 2026-03-01T00:00:00+08:00）。")
+	fmt.Fprintln(w, "  \t省略時不限制起始時間。")
+	fmt.Fprintln(w, "  --until RFC3339\t篩選截止時間，採 RFC3339 格式。省略時不限制截止時間。")
+	fmt.Fprintln(w, "  --limit N\t最大匯出筆數（預設：1000）。指定 --all 時此參數無效。")
+	fmt.Fprintln(w, "  --all\t匯出所有事件，忽略 --since / --until / --limit 限制。")
+	fmt.Fprintln(w, "  --format TYPE\t匯出格式（預設：json）：")
+	fmt.Fprintln(w, "  \t  json   完整 JSON 陣列")
+	fmt.Fprintln(w, "  \t  jsonl  每行一筆 JSON（JSON Lines）")
+	fmt.Fprintln(w, "  \t  text   人類可讀的文字格式")
+	fmt.Fprintln(w, "  --bom\t在輸出開頭加入 UTF-8 BOM，供 Windows 記事本正確顯示中文。")
+	fmt.Fprintln(w, "  --out PATH\t輸出檔案路徑。使用 '-' 輸出至 stdout。")
+	fmt.Fprintln(w, "  \t省略時自動命名並存入 %ProgramData%\\go-xwatch\\。")
+	_ = w.Flush()
+	fmt.Println()
+	fmt.Println("範例：")
+	fmt.Println("  # 匯出最近 1000 筆事件為 JSON（預設模式）")
+	fmt.Println("  xwatch export")
+	fmt.Println()
+	fmt.Println("  # 匯出所有事件輸出至 stdout")
+	fmt.Println("  xwatch export --all --out -")
+	fmt.Println()
+	fmt.Println("  # 篩選特定日期範圍，以 text 格式輸出並加 BOM（供記事本閱讀）")
+	fmt.Println("  xwatch export --since 2026-03-01T00:00:00+08:00 --until 2026-03-02T00:00:00+08:00 --format text --bom")
+	fmt.Println()
+	fmt.Println("  # 匯出最新 50 筆，存入指定檔案")
+	fmt.Println("  xwatch export --limit 50 --out D:\\logs\\events.json")
+	fmt.Println()
+	fmt.Println("  # 匯出全部事件為 JSON Lines 格式")
+	fmt.Println("  xwatch export --all --format jsonl --out D:\\logs\\events.jsonl")
 }
 
 func (c *cliApp) resolveRoot(rootArg string) (string, error) {

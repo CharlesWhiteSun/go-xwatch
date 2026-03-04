@@ -211,3 +211,177 @@ func TestDailyCommand_KnownCommandsDoNotIncludeDaily(t *testing.T) {
 		t.Error("daily 指令應已移除")
 	}
 }
+
+// ── 已移除指令確認 ────────────────────────────────────────────────────
+
+// TestUninstallCommand_NotRegistered 確認 uninstall 指令已從指令表移除。
+func TestUninstallCommand_NotRegistered(t *testing.T) {
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+	reg := app.buildCommandRegistry()
+	if _, ok := reg.Get("uninstall"); ok {
+		t.Error("uninstall 指令應已移除，但指令表中仍存在")
+	}
+}
+
+// TestCleanupCommand_NotRegistered 確認 cleanup 指令已從指令表移除。
+func TestCleanupCommand_NotRegistered(t *testing.T) {
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+	reg := app.buildCommandRegistry()
+	if _, ok := reg.Get("cleanup"); ok {
+		t.Error("cleanup 指令應已移除，但指令表中仍存在")
+	}
+}
+
+// TestRunCommand_NotRegistered 確認 run 指令已從指令表移除。
+func TestRunCommand_NotRegistered(t *testing.T) {
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+	reg := app.buildCommandRegistry()
+	if _, ok := reg.Get("run"); ok {
+		t.Error("run 指令應已移除，但指令表中仍存在")
+	}
+}
+
+// TestClearPurgeWipe_NotRegistered 確認 clear / purge / wipe 頂層指令已移除。
+func TestClearPurgeWipe_NotRegistered(t *testing.T) {
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+	reg := app.buildCommandRegistry()
+	for _, name := range []string{"clear", "purge", "wipe"} {
+		if _, ok := reg.Get(name); ok {
+			t.Errorf("指令 %q 應已移除，但指令表中仍存在", name)
+		}
+	}
+}
+
+// ── remove 與 db 指令確認 ─────────────────────────────────────────────
+
+// TestRemoveCommand_Registered 確認 remove 指令仍存在。
+func TestRemoveCommand_Registered(t *testing.T) {
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+	reg := app.buildCommandRegistry()
+	if _, ok := reg.Get("remove"); !ok {
+		t.Error("remove 指令應存在，但指令表中找不到")
+	}
+}
+
+// TestDBCommand_Registered 確認 db 指令已成功註冊。
+func TestDBCommand_Registered(t *testing.T) {
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+	reg := app.buildCommandRegistry()
+	if _, ok := reg.Get("db"); !ok {
+		t.Error("db 指令應存在，但指令表中找不到")
+	}
+}
+
+// TestDBCommand_HelpSubcommand 確認 db help 不回傳錯誤。
+func TestDBCommand_HelpSubcommand(t *testing.T) {
+	setupMinimalCLIConfig(t)
+
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+	reg := app.buildCommandRegistry()
+	cmd, ok := reg.Get("db")
+	if !ok {
+		t.Fatal("db 指令未註冊")
+	}
+	if err := cmd.Run([]string{"help"}); err != nil {
+		t.Errorf("db help 不應回傳錯誤，實際：%v", err)
+	}
+}
+
+// TestDBCommand_NoArgs_ShowsHelp 確認 db（無參數）不回傳錯誤（顯示說明）。
+func TestDBCommand_NoArgs_ShowsHelp(t *testing.T) {
+	setupMinimalCLIConfig(t)
+
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+	reg := app.buildCommandRegistry()
+	cmd, ok := reg.Get("db")
+	if !ok {
+		t.Fatal("db 指令未註冊")
+	}
+	if err := cmd.Run([]string{}); err != nil {
+		t.Errorf("db（無參數）不應回傳錯誤，實際：%v", err)
+	}
+}
+
+// TestDBCommand_UnknownSubcommand_ReturnsError 確認未知子指令回傳包含提示的錯誤。
+func TestDBCommand_UnknownSubcommand_ReturnsError(t *testing.T) {
+	setupMinimalCLIConfig(t)
+
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+	reg := app.buildCommandRegistry()
+	cmd, ok := reg.Get("db")
+	if !ok {
+		t.Fatal("db 指令未註冊")
+	}
+	err := cmd.Run([]string{"nonexistent"})
+	if err == nil {
+		t.Fatal("db <未知子指令> 應回傳錯誤，但得到 nil")
+	}
+	if !strings.Contains(err.Error(), "db help") {
+		t.Errorf("錯誤訊息應包含 'db help'，實際：%v", err)
+	}
+}
+
+// ── help 子指令測試 ───────────────────────────────────────────────────
+
+// TestInitCommand_HelpSubcommand 確認 init help 不回傳錯誤。
+func TestInitCommand_HelpSubcommand(t *testing.T) {
+	setupMinimalCLIConfig(t)
+
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+	reg := app.buildCommandRegistry()
+	cmd, ok := reg.Get("init")
+	if !ok {
+		t.Fatal("init 指令未註冊")
+	}
+	if err := cmd.Run([]string{"help"}); err != nil {
+		t.Errorf("init help 不應回傳錯誤，實際：%v", err)
+	}
+}
+
+// TestExportCommand_HelpSubcommand 確認 export help 不回傳錯誤。
+func TestExportCommand_HelpSubcommand(t *testing.T) {
+	setupMinimalCLIConfig(t)
+
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+	reg := app.buildCommandRegistry()
+	cmd, ok := reg.Get("export")
+	if !ok {
+		t.Fatal("export 指令未註冊")
+	}
+	if err := cmd.Run([]string{"help"}); err != nil {
+		t.Errorf("export help 不應回傳錯誤，實際：%v", err)
+	}
+}
