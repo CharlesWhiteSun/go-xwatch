@@ -54,124 +54,81 @@ func TestRun_Unknown_ReturnsError(t *testing.T) {
 
 func TestStatus_ReadsConfig(t *testing.T) {
 	setupConfig(t)
-	if err := status(); err != nil {
-		t.Fatalf("status 不應回傳錯誤，got %v", err)
+	if err := Run([]string{"status"}); err != nil {
+		t.Fatalf("filecheck status 不應回傳錯誤，got %v", err)
 	}
 }
 
-//  start / stop
+//  enable / disable
 
-func TestStart_EnablesFilecheck(t *testing.T) {
+func TestRun_Enable_SetsFlags(t *testing.T) {
 	setupConfig(t)
-	if err := start(); err != nil {
-		t.Fatalf("start 不應回傳錯誤，got %v", err)
+	if err := Run([]string{"enable", "--to", "a@example.com"}); err != nil {
+		t.Fatalf("filecheck enable 不應回傳錯誤，got %v", err)
 	}
 	s, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !s.Filecheck.Enabled {
-		t.Error("start 後 Filecheck.Enabled 應為 true")
+		t.Error("enable 後 Filecheck.Enabled 應為 true")
+	}
+	if !s.Filecheck.Mail.IsEnabled() {
+		t.Error("enable 後 Filecheck.Mail.IsEnabled() 應為 true")
+	}
+	if len(s.Filecheck.Mail.To) != 1 || s.Filecheck.Mail.To[0] != "a@example.com" {
+		t.Errorf("收件人應為 a@example.com，got %v", s.Filecheck.Mail.To)
 	}
 }
 
-func TestStop_DisablesFilecheck(t *testing.T) {
+func TestRun_Disable_ClearsFlags(t *testing.T) {
 	setupConfig(t)
-	if err := start(); err != nil {
-		t.Fatal(err)
-	}
-	if err := stop(); err != nil {
-		t.Fatalf("stop 不應回傳錯誤，got %v", err)
+	// 先啟用
+	_ = Run([]string{"enable", "--to", "a@example.com"})
+	// 再停用
+	if err := Run([]string{"disable"}); err != nil {
+		t.Fatalf("filecheck disable 不應回傳錯誤，got %v", err)
 	}
 	s, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Filecheck.Enabled {
-		t.Error("stop 後 Filecheck.Enabled 應為 false")
+		t.Error("disable 後 Filecheck.Enabled 應為 false")
+	}
+	if s.Filecheck.Mail.IsEnabled() {
+		t.Error("disable 後 Filecheck.Mail.IsEnabled() 應為 false")
 	}
 }
 
-//  set
-
-func TestSet_ScanDir_Absolute(t *testing.T) {
+func TestEnable_AlsoSetsFilecheckEnabled(t *testing.T) {
 	setupConfig(t)
-	absPath := filepath.Join(t.TempDir(), "mylogs")
-
-	if err := set([]string{"--scan-dir", absPath}); err != nil {
-		t.Fatalf("set --scan-dir 不應回傳錯誤，got %v", err)
-	}
-	s, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.Filecheck.ScanDir != absPath {
-		t.Errorf("ScanDir 應為 %q，got %q", absPath, s.Filecheck.ScanDir)
-	}
-}
-
-func TestSet_ScanDir_Relative(t *testing.T) {
-	setupConfig(t)
-	if err := set([]string{"--scan-dir", `storage\archives`}); err != nil {
-		t.Fatalf("set --scan-dir 相對路徑不應回傳錯誤，got %v", err)
+	if err := mailEnable([]string{"--to", "test@example.com"}); err != nil {
+		t.Fatalf("mailEnable 不應回傳錯誤，got %v", err)
 	}
 	s, _ := config.Load()
-	if s.Filecheck.ScanDir != `storage\archives` {
-		t.Errorf("ScanDir 應為 storage\\archives，got %q", s.Filecheck.ScanDir)
+	if !s.Filecheck.Enabled {
+		t.Error("啟用 filecheck mail 時 Filecheck.Enabled 也應同步為 true")
 	}
 }
 
-func TestSet_NoFlags_NothingChanged(t *testing.T) {
+func TestDisable_AlsoDisablesFilecheckEnabled(t *testing.T) {
 	setupConfig(t)
-	// 不傳任何旗標應正常結束（不回傳錯誤）
-	if err := set(nil); err != nil {
-		t.Fatalf("set 不傳旗標不應回傳錯誤，got %v", err)
+	_ = mailEnable([]string{"--to", "test@example.com"})
+	if err := mailDisable(); err != nil {
+		t.Fatalf("mailDisable 不應回傳錯誤，got %v", err)
 	}
-}
-
-//  runCheck
-
-func TestRunCheck_NoError(t *testing.T) {
-	setupConfig(t)
-	// 掃描目錄不存在時應印出 [ERROR]，但不回傳錯誤
-	if err := runCheck(nil); err != nil {
-		t.Fatalf("runCheck 不應回傳錯誤，got %v", err)
-	}
-}
-
-func TestRunCheck_InvalidDate_ReturnsError(t *testing.T) {
-	setupConfig(t)
-	if err := runCheck([]string{"--date", "not-a-date"}); err == nil {
-		t.Fatal("無效日期應回傳錯誤")
-	}
-}
-
-func TestRunCheck_MatchingFileFound(t *testing.T) {
-	tmp := setupConfig(t)
 	s, _ := config.Load()
-	_ = tmp
-
-	// 建立預設 scanDir 並放一個含昨天 YYYY-DD-MM 格式的檔案
-	yesterday := time.Now().AddDate(0, 0, -1)
-	datePattern := yesterday.Format(filecheck.FileDateFormat)
-	scanDir := filecheck.DefaultScanDir(s.RootDir)
-	if err := os.MkdirAll(scanDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(scanDir, "data_"+datePattern+".csv"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := runCheck(nil); err != nil {
-		t.Fatalf("有符合檔案時 runCheck 不應回傳錯誤，got %v", err)
+	if s.Filecheck.Enabled {
+		t.Error("停用 filecheck mail 時 Filecheck.Enabled 也應同步為 false")
 	}
 }
 
 //  mail subcommands
 
-func TestMailHelp_NoError(t *testing.T) {
-	if err := runMail([]string{"help"}); err != nil {
-		t.Fatalf("mail help 不應回傳錯誤，got %v", err)
+func TestHelp_NoError(t *testing.T) {
+	if err := Run([]string{"help"}); err != nil {
+		t.Fatalf("filecheck help 不應回傳錯誤，got %v", err)
 	}
 }
 
@@ -201,10 +158,22 @@ func TestMailDisable_ClearsFlag(t *testing.T) {
 	}
 }
 
-func TestMailSet_Schedule(t *testing.T) {
+// set 子指令已移除，應回傳未知子指令錯誤
+func TestRun_Set_IsRemovedAndReturnsError(t *testing.T) {
+	err := Run([]string{"set", "--schedule", "08:30"})
+	if err == nil {
+		t.Fatal("'filecheck set' 已移除，應回傳錯誤，got nil")
+	}
+	if !strings.Contains(err.Error(), "filecheck help") {
+		t.Errorf("錯誤應提示 'filecheck help'，got %q", err.Error())
+	}
+}
+
+// enable --schedule 取代原 set --schedule
+func TestEnable_WithSchedule_SetsSchedule(t *testing.T) {
 	setupConfig(t)
-	if err := mailSet([]string{"--schedule", "08:30"}); err != nil {
-		t.Fatalf("mailSet --schedule 不應回傳錯誤，got %v", err)
+	if err := Run([]string{"enable", "--to", "a@example.com", "--schedule", "08:30"}); err != nil {
+		t.Fatalf("filecheck enable --schedule 不應回傳錯誤，got %v", err)
 	}
 	s, _ := config.Load()
 	if s.Filecheck.Mail.Schedule != "08:30" {
@@ -212,10 +181,22 @@ func TestMailSet_Schedule(t *testing.T) {
 	}
 }
 
-func TestMailSet_InvalidSchedule_ReturnsError(t *testing.T) {
+func TestEnable_WithInvalidSchedule_ReturnsError(t *testing.T) {
 	setupConfig(t)
-	if err := mailSet([]string{"--schedule", "not-a-time"}); err == nil {
+	if err := Run([]string{"enable", "--to", "a@example.com", "--schedule", "not-a-time"}); err == nil {
 		t.Fatal("無效排程應回傳錯誤")
+	}
+}
+
+// enable --tz 取代原 set --tz
+func TestEnable_WithTimezone_SetsTimezone(t *testing.T) {
+	setupConfig(t)
+	if err := Run([]string{"enable", "--to", "a@example.com", "--tz", "UTC"}); err != nil {
+		t.Fatalf("filecheck enable --tz 不應回傳錯誤，got %v", err)
+	}
+	s, _ := config.Load()
+	if s.Filecheck.Mail.Timezone != "UTC" {
+		t.Errorf("Timezone 應為 UTC，got %q", s.Filecheck.Mail.Timezone)
 	}
 }
 
@@ -307,13 +288,29 @@ func TestMailSend_BodyContainsFoundWhenFileMatchesPattern(t *testing.T) {
 	}
 }
 
-func TestRunMail_Unknown_ReturnsError(t *testing.T) {
-	err := runMail([]string{"nonexistent"})
+func TestRun_Unknown_Subcommand_MailIsNoLongerValid(t *testing.T) {
+	// 原本的 'filecheck mail' 層級已移除，'mail' 現在是未知子指令
+	err := Run([]string{"mail", "help"})
 	if err == nil {
-		t.Fatal("未知 mail 子指令應回傳錯誤")
+		t.Fatal("預期回傳錯誤，'mail' 已不再是有效子指令")
 	}
-	if !strings.Contains(err.Error(), "filecheck mail help") {
-		t.Errorf("錯誤應提示 filecheck mail help，got %q", err.Error())
+	if !strings.Contains(err.Error(), "filecheck help") {
+		t.Errorf("錯誤應提示 'filecheck help'，got %q", err.Error())
+	}
+}
+
+func TestRun_Status_Dispatch(t *testing.T) {
+	setupConfig(t)
+	if err := Run([]string{"status"}); err != nil {
+		t.Fatalf("Run status 不應回傳錯誤，got %v", err)
+	}
+}
+
+func TestRun_Send_Dispatch_NoRecipients_ReturnsError(t *testing.T) {
+	setupConfig(t)
+	err := Run([]string{"send"})
+	if err == nil {
+		t.Fatal("未設收件人時 filecheck send 應回傳錯誤")
 	}
 }
 
@@ -452,16 +449,15 @@ func TestMailSend_InvalidToFlag_ReturnsError(t *testing.T) {
 	}
 }
 
-// ── help text 不含 xwatch ────────────────────────────────────────────
+// ── help text 子指令檢查 ────────────────────────────────────────────────
 
-func TestHelpText_NoXwatchPrefix(t *testing.T) {
-	// 捕捉 printHelp 的輸出（透過測試 Run 中的 help 子指令不回傳錯誤的間接方式）
-	// 直接檢查 printHelp/printMailHelp 輸出需要 os.Stdout 重定向，
-	// 此處以功能層面驗證 Run("help") 不會呼叫到含 xwatch 的輸出
+func TestHelpText_DoesNotAcceptOldMailSubcommand(t *testing.T) {
+	// 'filecheck help' 應正常執行
 	if err := Run([]string{"help"}); err != nil {
 		t.Fatalf("filecheck help 不應回傳錯誤，got %v", err)
 	}
-	if err := Run([]string{"mail", "help"}); err != nil {
-		t.Fatalf("filecheck mail help 不應回傳錯誤，got %v", err)
+	// '層級已移除的 filecheck mail help' 應回傳錯誤
+	if err := Run([]string{"mail", "help"}); err == nil {
+		t.Fatal("預期 'filecheck mail help' 回傳錯誤，因為 'mail' 已不再是有效子指令")
 	}
 }

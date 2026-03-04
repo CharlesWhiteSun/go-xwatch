@@ -48,7 +48,7 @@ func (m *mockLogger) anyArgContains(sub string) bool {
 	return false
 }
 
-// setupRemoveTestConfig 建立包含啟用郵件與心跳的 config 檔案供測試使用。
+// setupRemoveTestConfig 建立包含啟用郵件、心跳與 filecheck 的 config 檔案供測試使用。
 func setupRemoveTestConfig(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
@@ -65,15 +65,22 @@ func setupRemoveTestConfig(t *testing.T) string {
 			Enabled: &tr,
 			To:      []string{"r021@httc.com.tw"},
 		},
+		Filecheck: config.FilecheckSettings{
+			Enabled: true,
+			Mail: config.FilecheckMailSettings{
+				Enabled: &tr,
+				To:      []string{"admin@example.com"},
+			},
+		},
 	}); err != nil {
 		t.Fatalf("setupRemoveTestConfig: Save failed: %v", err)
 	}
 	return tmp
 }
 
-// TestDisableAllFeaturesOnRemove_DisablesHeartbeatAndMail 確認呼叫後
-// config 中的心跳與郵件排程均已停用，且每項停用均有 ops-log 紀錄。
-func TestDisableAllFeaturesOnRemove_DisablesHeartbeatAndMail(t *testing.T) {
+// TestDisableAllFeaturesOnRemove_DisablesHeartbeatMailAndFilecheck 確認呼叫後
+// config 中的心跳、郵件排程與 filecheck 排程均已停用。
+func TestDisableAllFeaturesOnRemove_DisablesHeartbeatMailAndFilecheck(t *testing.T) {
 	setupRemoveTestConfig(t)
 
 	ml := &mockLogger{}
@@ -92,6 +99,12 @@ func TestDisableAllFeaturesOnRemove_DisablesHeartbeatAndMail(t *testing.T) {
 	}
 	if loaded.Mail.IsEnabled() {
 		t.Fatal("預期 Mail.IsEnabled()=false，但仍為 true")
+	}
+	if loaded.Filecheck.Enabled {
+		t.Fatal("預期 Filecheck.Enabled=false，但仍為 true")
+	}
+	if loaded.Filecheck.Mail.IsEnabled() {
+		t.Fatal("預期 Filecheck.Mail.IsEnabled()=false，但仍為 true")
 	}
 }
 
@@ -112,6 +125,9 @@ func TestDisableAllFeaturesOnRemove_LogsSteps(t *testing.T) {
 	if !ml.anyArgContains("郵件排程已停用") {
 		t.Fatal("期望 ops-log 包含「郵件排程已停用」，但未找到")
 	}
+	if !ml.anyArgContains("filecheck 排程已停用") {
+		t.Fatal("期望 ops-log 包含「filecheck 排程已停用」，但未找到")
+	}
 }
 
 // TestDisableAllFeaturesOnRemove_NoConfigNoError 確認 config 檔不存在時
@@ -130,5 +146,59 @@ func TestDisableAllFeaturesOnRemove_NoConfigNoError(t *testing.T) {
 
 	if err := app.disableAllFeaturesOnRemove(); err != nil {
 		t.Fatalf("應容錯 config 不存在，但回傳：%v", err)
+	}
+}
+
+// TestFilecheckEnabledDefaultFalse 確認新建立的 config Filecheck.Enabled 預設為 false。
+func TestFilecheckEnabledDefaultFalse(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	root := filepath.Join(tmp, "root")
+
+	if err := config.Save(config.Settings{RootDir: root}); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if loaded.Filecheck.Enabled {
+		t.Fatal("Filecheck.Enabled 預設應為 false，但實際為 true")
+	}
+	if loaded.Filecheck.Mail.IsEnabled() {
+		t.Fatal("Filecheck.Mail.IsEnabled() 預設應為 false，但實際為 true")
+	}
+}
+
+// TestFilecheckDisableOnRemove_PreviouslyEnabled 確認移除前 filecheck 為啟用狀態，
+// 執行 disableAllFeaturesOnRemove 後確實停用。
+func TestFilecheckDisableOnRemove_PreviouslyEnabled(t *testing.T) {
+	setupRemoveTestConfig(t) // 設定中 Filecheck.Enabled=true
+
+	// 先確認設定中 filecheck 確實是啟用的
+	before, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load before: %v", err)
+	}
+	if !before.Filecheck.Enabled {
+		t.Skip("setupRemoveTestConfig 沒有啟用 filecheck，跳過此測試")
+	}
+
+	ml := &mockLogger{}
+	app := &cliApp{opsLogger: ml}
+	if err := app.disableAllFeaturesOnRemove(); err != nil {
+		t.Fatalf("disableAllFeaturesOnRemove: %v", err)
+	}
+
+	after, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load after: %v", err)
+	}
+	if after.Filecheck.Enabled {
+		t.Error("disableAllFeaturesOnRemove 後 Filecheck.Enabled 應為 false")
+	}
+	if after.Filecheck.Mail.IsEnabled() {
+		t.Error("disableAllFeaturesOnRemove 後 Filecheck.Mail.IsEnabled() 應為 false")
 	}
 }

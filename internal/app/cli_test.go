@@ -385,3 +385,130 @@ func TestExportCommand_HelpSubcommand(t *testing.T) {
 		t.Errorf("export help 不應回傳錯誤，實際：%v", err)
 	}
 }
+
+// ── filecheck enable 服務安裝檢查 ─────────────────────────────────────
+
+// TestFilecheckEnable_ServiceNotInstalled_ReturnsError 確認服務未安裝時，
+// filecheck enable 返回包含「init --install-service」的友善錯誤訊息。
+func TestFilecheckEnable_ServiceNotInstalled_ReturnsError(t *testing.T) {
+	setupMinimalCLIConfig(t)
+
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return false },
+	}
+
+	reg := app.buildCommandRegistry()
+	cmd, ok := reg.Get("filecheck")
+	if !ok {
+		t.Fatal("filecheck command not registered")
+	}
+
+	err := cmd.Run([]string{"enable", "--to", "test@example.com"})
+	if err == nil {
+		t.Fatal("服務未安裝時期望 filecheck enable 回傳錯誤，但得到 nil")
+	}
+	if !strings.Contains(err.Error(), "init --install-service") {
+		t.Errorf("錯誤訊息應包含 'init --install-service'，實際：%v", err)
+	}
+	if !strings.Contains(err.Error(), "目錄檔案檢查") {
+		t.Errorf("錯誤訊息應提及功能名稱「目錄檔案檢查」，實際：%v", err)
+	}
+}
+
+// TestFilecheckEnable_ServiceInstalled_NoServiceError 確認服務已安裝時，
+// filecheck enable 不會因服務未安裝而報錯。
+func TestFilecheckEnable_ServiceInstalled_NoServiceError(t *testing.T) {
+	setupMinimalCLIConfig(t)
+
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+
+	reg := app.buildCommandRegistry()
+	cmd, ok := reg.Get("filecheck")
+	if !ok {
+		t.Fatal("filecheck command not registered")
+	}
+
+	err := cmd.Run([]string{"enable", "--to", "test@example.com"})
+	// 可能因其他原因回傳錯誤，但不應是服務未安裝的錯誤
+	if err != nil && strings.Contains(err.Error(), "init --install-service") {
+		t.Errorf("服務已安裝時不應出現服務未安裝錯誤，實際：%v", err)
+	}
+}
+
+// TestFilecheckDisable_ServiceNotInstalled_NotBlocked 確認服務未安裝時，
+// filecheck disable 仍可執行（只有 enable 才需要服務）。
+func TestFilecheckDisable_ServiceNotInstalled_NotBlocked(t *testing.T) {
+	setupMinimalCLIConfig(t)
+
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return false },
+	}
+
+	reg := app.buildCommandRegistry()
+	cmd, ok := reg.Get("filecheck")
+	if !ok {
+		t.Fatal("filecheck command not registered")
+	}
+
+	err := cmd.Run([]string{"disable"})
+	if err != nil && strings.Contains(err.Error(), "init --install-service") {
+		t.Errorf("filecheck disable 不應受服務安裝檢查阻擋，實際：%v", err)
+	}
+}
+
+// TestFilecheckStatus_ServiceNotInstalled_NotBlocked 確認服務未安裝時，
+// filecheck status 仍可執行（唯讀操作不需要服務）。
+func TestFilecheckStatus_ServiceNotInstalled_NotBlocked(t *testing.T) {
+	setupMinimalCLIConfig(t)
+
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return false },
+	}
+
+	reg := app.buildCommandRegistry()
+	cmd, ok := reg.Get("filecheck")
+	if !ok {
+		t.Fatal("filecheck command not registered")
+	}
+
+	err := cmd.Run([]string{"status"})
+	if err != nil && strings.Contains(err.Error(), "init --install-service") {
+		t.Errorf("filecheck status 不應受服務安裝檢查阻擋，實際：%v", err)
+	}
+}
+
+// TestFilecheckEnable_ErrorMessage_MatchesMailStyleHint 確認錯誤格式與 mail enable
+// 的提示一致，均為「服務尚未安裝，無法啟用…功能，請先執行『init --install-service』」。
+func TestFilecheckEnable_ErrorMessage_MatchesMailStyleHint(t *testing.T) {
+	setupMinimalCLIConfig(t)
+
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return false },
+	}
+	reg := app.buildCommandRegistry()
+
+	filecheckCmd, _ := reg.Get("filecheck")
+	mailCmd, _ := reg.Get("mail")
+
+	fcErr := filecheckCmd.Run([]string{"enable"})
+	mailErr := mailCmd.Run([]string{"enable"})
+
+	for _, e := range []error{fcErr, mailErr} {
+		if e == nil {
+			t.Fatal("服務未安裝時 enable 應回傳錯誤")
+		}
+		if !strings.Contains(e.Error(), "服務尚未安裝") {
+			t.Errorf("錯誤應包含「服務尚未安裝」，實際：%v", e)
+		}
+		if !strings.Contains(e.Error(), "init --install-service") {
+			t.Errorf("錯誤應包含 'init --install-service'，實際：%v", e)
+		}
+	}
+}

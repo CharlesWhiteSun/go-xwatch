@@ -9,7 +9,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -17,10 +16,10 @@ import (
 	"go-xwatch/internal/config"
 	"go-xwatch/internal/filecheck"
 	"go-xwatch/internal/mailer"
-	"go-xwatch/internal/paths"
 )
 
 // Run 處理 filecheck 子指令。
+// filecheck 的功能等同於原本的 filecheck mail，直接管理每日目錄掃描郵件通知。
 func Run(args []string) error {
 	if len(args) == 0 {
 		printUsage()
@@ -35,216 +34,21 @@ func Run(args []string) error {
 		printHelp()
 		return nil
 	case "status":
-		return status()
-	case "start":
-		return start()
-	case "stop":
-		return stop()
-	case "set":
-		return set(rest)
-	case "run":
-		return runCheck(rest)
-	case "mail":
-		return runMail(rest)
-	default:
-		return fmt.Errorf("filecheck: 未知子指令 %q，請執行 'filecheck help' 查看說明", sub)
-	}
-}
-
-//  status
-
-func status() error {
-	settings, err := config.Load()
-	if err != nil {
-		return err
-	}
-	fc := settings.Filecheck
-
-	fmt.Println("filecheck 功能啟用：", fc.Enabled)
-
-	// 掃描目錄
-	resolvedScanDir := filecheck.ResolveScanDir(settings.RootDir, fc.ScanDir)
-	if fc.ScanDir == "" {
-		fmt.Printf("掃描目錄：%s（預設）\n", resolvedScanDir)
-	} else {
-		fmt.Printf("掃描目錄：%s\n", resolvedScanDir)
-	}
-
-	// log 目錄
-	dataDir, _ := paths.EnsureDataDir()
-	logDir := filecheck.DefaultLogDir(dataDir)
-	fmt.Println("log 目錄：", logDir)
-
-	// Mail 狀態
-	m := fc.Mail
-	fmt.Println()
-	fmt.Println("filecheck mail 啟用：", m.IsEnabled())
-	if m.IsEnabled() {
-		sched := m.Schedule
-		if sched == "" {
-			sched = config.DefaultFilecheckMailSchedule + "（預設）"
-		}
-		fmt.Println("  寄送排程：", sched, "(時區:", m.Timezone+")")
-		fmt.Println("  收件人：", strings.Join(m.To, ", "))
-	}
-	return nil
-}
-
-//  start
-
-func start() error {
-	settings, err := config.Load()
-	if err != nil {
-		return err
-	}
-	if settings.Filecheck.Enabled {
-		fmt.Println("filecheck 功能已在啟用狀態。")
-		return nil
-	}
-	settings.Filecheck.Enabled = true
-	if err := config.Save(settings); err != nil {
-		return err
-	}
-	fmt.Println("filecheck 功能已啟用。服務將於下次設定重載（約 30 秒）後開始執行。")
-	return nil
-}
-
-//  stop
-
-func stop() error {
-	settings, err := config.Load()
-	if err != nil {
-		return err
-	}
-	if !settings.Filecheck.Enabled {
-		fmt.Println("filecheck 功能已在停用狀態。")
-		return nil
-	}
-	settings.Filecheck.Enabled = false
-	if err := config.Save(settings); err != nil {
-		return err
-	}
-	fmt.Println("filecheck 功能已停用。")
-	return nil
-}
-
-//  set
-
-func set(args []string) error {
-	fs := flag.NewFlagSet("filecheck set", flag.ContinueOnError)
-	scanDirFlag := fs.String("scan-dir", "", "掃描目錄（空白=預設 {rootDir}\\storage\\logs；支援絕對路徑或相對 rootDir 的相對路徑）")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	settings, err := config.Load()
-	if err != nil {
-		return err
-	}
-
-	changed := false
-
-	if v := strings.TrimSpace(*scanDirFlag); v != "" {
-		settings.Filecheck.ScanDir = v
-		fmt.Printf("已設定掃描目錄：%s\n", filecheck.ResolveScanDir(settings.RootDir, v))
-		changed = true
-	}
-
-	if !changed {
-		fmt.Println("未指定任何變更，請執行 'filecheck set --help' 查看可用參數。")
-		return nil
-	}
-
-	return config.Save(settings)
-}
-
-//  run（手動立即執行一次掃描）
-
-func runCheck(args []string) error {
-	fs := flag.NewFlagSet("filecheck run", flag.ContinueOnError)
-	dateFlag := fs.String("date", "", "指定要掃描的日期（YYYY-MM-DD）；省略時使用昨天")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	settings, err := config.Load()
-	if err != nil {
-		return err
-	}
-
-	// 預設昨天
-	checkDate := time.Now().AddDate(0, 0, -1)
-	if d := strings.TrimSpace(*dateFlag); d != "" {
-		parsed, err := time.Parse("2006-01-02", d)
-		if err != nil {
-			return fmt.Errorf("日期格式錯誤，請使用 YYYY-MM-DD：%w", err)
-		}
-		checkDate = parsed
-	}
-
-	scanDir := filecheck.ResolveScanDir(settings.RootDir, settings.Filecheck.ScanDir)
-	datePattern := checkDate.Format(filecheck.FileDateFormat)
-
-	fmt.Printf(" filecheck 結果（%s）\n", checkDate.Format("2006-01-02"))
-	fmt.Printf("掃描目錄：%s\n", scanDir)
-	fmt.Printf("搜尋格式：%s（YYYY-DD-MM）\n\n", datePattern)
-
-	files, scanErr := filecheck.ScanForDate(scanDir, checkDate)
-	if scanErr != nil {
-		fmt.Printf("[ERROR] 無法讀取目錄：%v\n", scanErr)
-	} else if len(files) == 0 {
-		fmt.Println("[NOT FOUND] 未找到符合指定日期格式的檔案")
-	} else {
-		fmt.Printf("[FOUND] 找到 %d 個符合的檔案：\n", len(files))
-		for _, f := range files {
-			fmt.Printf("  - %s\n", f)
-		}
-	}
-
-	// 寫入 log
-	dataDir, err := paths.EnsureDataDir()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "警告：取得資料目錄失敗，log 略過：%v\n", err)
-		return nil
-	}
-	logDir := filecheck.DefaultLogDir(dataDir)
-	if err := filecheck.WriteLog(logDir, scanDir, files, checkDate, scanErr, time.Now()); err != nil {
-		fmt.Fprintf(os.Stderr, "警告：寫入 log 失敗：%v\n", err)
-	} else {
-		fmt.Printf("\n已寫入 log：%s\n", filepath.Join(logDir, "filecheck_"+time.Now().Format("2006-01-02")+".log"))
-	}
-	return nil
-}
-
-//  mail 子指令群
-
-func runMail(args []string) error {
-	if len(args) == 0 {
-		printMailUsage()
-		return nil
-	}
-	sub := strings.ToLower(args[0])
-	rest := args[1:]
-	switch sub {
-	case "help":
-		printMailHelp()
-		return nil
-	case "status":
 		return mailStatus()
 	case "enable":
 		return mailEnable(rest)
 	case "disable":
 		return mailDisable()
-	case "set":
-		return mailSet(rest)
 	case "add-to":
 		return mailAddTo(rest)
 	case "send":
 		return mailSend(rest, nil)
 	default:
-		return fmt.Errorf("filecheck mail: 未知子指令 %q，請執行 'filecheck mail help' 查看說明", sub)
+		return fmt.Errorf("filecheck: 未知子指令 %q，請執行 'filecheck help' 查看說明", sub)
 	}
 }
+
+//  各子指令實作
 
 func mailStatus() error {
 	settings, err := config.Load()
@@ -324,10 +128,12 @@ func mailEnable(args []string) error {
 		return err
 	}
 	settings.Filecheck.Mail = m
+	// 同步啟用外層 Filecheck.Enabled，確保後端排程器可正常運作
+	settings.Filecheck.Enabled = true
 	if err := config.Save(settings); err != nil {
 		return err
 	}
-	fmt.Println("filecheck mail 已啟用。")
+	fmt.Println("filecheck 郵件通知已啟用。服務將於下次設定重載（約 30 秒）後開始執行。")
 	return nil
 }
 
@@ -337,28 +143,17 @@ func mailDisable() error {
 		return err
 	}
 	settings.Filecheck.Mail.Enabled = config.BoolPtr(false)
+	// 同步停用外層 Filecheck.Enabled
+	settings.Filecheck.Enabled = false
 	if err := config.Save(settings); err != nil {
 		return err
 	}
-	fmt.Println("filecheck mail 已停用。")
+	fmt.Println("filecheck 郵件通知已停用。")
 	return nil
 }
 
-func mailSet(args []string) error {
-	settings, err := config.Load()
-	if err != nil {
-		return err
-	}
-	m := settings.Filecheck.Mail
-	if err := applyMailFlags(&m, args); err != nil {
-		return err
-	}
-	settings.Filecheck.Mail = m
-	return config.Save(settings)
-}
-
 func applyMailFlags(m *config.FilecheckMailSettings, args []string) error {
-	fs := flag.NewFlagSet("filecheck mail set", flag.ContinueOnError)
+	fs := flag.NewFlagSet("filecheck enable", flag.ContinueOnError)
 	toFlag := fs.String("to", "", "以逗號分隔的收件人（覆蓋現有清單；追加請用 add-to）")
 	scheduleFlag := fs.String("schedule", "", "每日寄送時間 HH:MM")
 	tzFlag := fs.String("tz", "", "時區（預設 Asia/Taipei）")
@@ -465,96 +260,34 @@ func mailSend(args []string, sendFn func(ctx context.Context, cfg mailer.SMTPCon
 func printUsage() {
 	fmt.Println("用法：filecheck <subcommand> [flags]")
 	fmt.Println()
-	fmt.Println("子指令：help | status | start | stop | set | run | mail")
+	fmt.Println("子指令：help | status | enable | disable | add-to | send")
 	fmt.Println("執行 'filecheck help' 查看完整說明")
 }
 
 func printHelp() {
 	fmt.Println()
-	fmt.Println("filecheck  每日排程掃描指定目錄的檔案存在性")
+	fmt.Println("filecheck  管理 filecheck 目錄掃描報告的郵件通知")
 	fmt.Println()
 	fmt.Println("說明：")
-	fmt.Println("  在每日排程時間（預設早上 10:00），掃描指定目錄，")
-	fmt.Println("  確認目錄內是否存在包含前一日日期（YYYY-DD-MM 格式）的檔案。")
-	fmt.Println("  無論找到或未找到，皆以郵件通知指定人員。")
-	fmt.Println()
-	fmt.Println("  預設掃描路徑：")
-	fmt.Println("    {rootDir}\\storage\\logs\\")
-	fmt.Println("  搜尋格式（YYYY-DD-MM）範例：前一日 2026-03-04  搜尋 '2026-04-03'")
-	fmt.Println("  可透過 set --scan-dir 指定自訂目錄。")
+	fmt.Println("  在每日指定時間（預設 10:00）掃描目錄，確認是否存在包含前一日日期")
+	fmt.Println("  （YYYY-DD-MM 格式）的檔案，無論找到或未找到皆以郵件通知指定人員。")
+	fmt.Println("  SMTP 連線設定繼承自 'mail' 指令的 SMTP 組態（共用 SMTP 伺服器）。")
+	fmt.Println("  此郵件通知功能獨立於監控 watch log 的 mail 指令。")
 	fmt.Println()
 	fmt.Println("用法：")
 	fmt.Println("  filecheck <subcommand> [flags]")
 	fmt.Println()
 	fmt.Println("子指令：")
 	w := tabwriter.NewWriter(os.Stdout, 2, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "  status\t顯示目前設定與 log 目錄")
-	fmt.Fprintln(w, "  start\t啟用 filecheck（需服務已安裝）")
-	fmt.Fprintln(w, "  stop\t停用 filecheck")
-	fmt.Fprintln(w, "  set [flags]\t修改掃描設定")
-	fmt.Fprintln(w, "  run [--date]\t立即執行一次掃描並輸出結果")
-	fmt.Fprintln(w, "  mail <subcommand>\t管理 filecheck 郵件通知（獨立於 watch log 郵件）")
-	fmt.Fprintln(w, "  help\t顯示本說明")
-	_ = w.Flush()
-	fmt.Println()
-	fmt.Println("set 參數：")
-	w2 := tabwriter.NewWriter(os.Stdout, 2, 0, 2, ' ', 0)
-	fmt.Fprintln(w2, "  --scan-dir PATH\t掃描目錄（空白=使用預設 {rootDir}\\storage\\logs）")
-	_ = w2.Flush()
-	fmt.Println()
-	fmt.Println("範例：")
-	fmt.Println("  # 啟用 filecheck")
-	fmt.Println("  filecheck start")
-	fmt.Println()
-	fmt.Println("  # 設定自訂掃描目錄（絕對路徑）")
-	fmt.Println(`  filecheck set --scan-dir "D:\data\logs"`)
-	fmt.Println()
-	fmt.Println("  # 設定相對 rootDir 的掃描目錄")
-	fmt.Println(`  filecheck set --scan-dir "storage\archives"`)
-	fmt.Println()
-	fmt.Println("  # 立即執行昨天的掃描")
-	fmt.Println("  filecheck run")
-	fmt.Println()
-	fmt.Println("  # 立即執行指定日期的掃描")
-	fmt.Println("  filecheck run --date 2026-03-01")
-	fmt.Println()
-	fmt.Println("注意：")
-	fmt.Println("  - filecheck start 需要服務已透過 'init --install-service' 安裝")
-	fmt.Println("  - filecheck run 可在服務未啟動下獨立執行")
-	fmt.Println("  - filecheck mail 的郵件通知與 mail（watch log）完全獨立")
-}
-
-func printMailUsage() {
-	fmt.Println("用法：filecheck mail <subcommand> [flags]")
-	fmt.Println()
-	fmt.Println("子指令：help | status | enable | disable | set | add-to | send")
-	fmt.Println("執行 'filecheck mail help' 查看完整說明")
-}
-
-func printMailHelp() {
-	fmt.Println()
-	fmt.Println("filecheck mail  管理 filecheck 目錄掃描報告的郵件通知")
-	fmt.Println()
-	fmt.Println("說明：")
-	fmt.Println("  此郵件通知功能獨立於監控 watch log 的 mail 指令，")
-	fmt.Println("  在每日指定時間（預設 10:00）掃描目錄並寄送結果。")
-	fmt.Println("  SMTP 連線設定繼承自 'mail' 指令的 SMTP 組態（共用 SMTP 伺服器）。")
-	fmt.Println()
-	fmt.Println("用法：")
-	fmt.Println("  filecheck mail <subcommand> [flags]")
-	fmt.Println()
-	fmt.Println("子指令：")
-	w := tabwriter.NewWriter(os.Stdout, 2, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "  help\t顯示本說明")
 	fmt.Fprintln(w, "  status\t顯示目前郵件設定")
-	fmt.Fprintln(w, "  enable [flags]\t啟用排程郵件並設定參數")
+	fmt.Fprintln(w, "  enable [flags]\t啟用排程郵件並設定參數（需服務已安裝）")
 	fmt.Fprintln(w, "  disable\t停用排程郵件")
-	fmt.Fprintln(w, "  set [flags]\t修改郵件設定（不改變啟用狀態）")
 	fmt.Fprintln(w, "  add-to <email>\t追加收件人（不覆蓋現有清單）")
 	fmt.Fprintln(w, "  send\t立即掃描並寄送指定日期的 filecheck 報告")
 	_ = w.Flush()
 	fmt.Println()
-	fmt.Println("enable / set 共用參數：")
+	fmt.Println("enable 參數：")
 	w2 := tabwriter.NewWriter(os.Stdout, 2, 0, 2, ' ', 0)
 	fmt.Fprintln(w2, "  --to <email[,email,...]>\t覆蓋收件人清單（逗號分隔多個地址）")
 	fmt.Fprintln(w2, "  --schedule HH:MM\t每日寄送時間（預設 10:00）")
@@ -562,8 +295,8 @@ func printMailHelp() {
 	_ = w2.Flush()
 	fmt.Println()
 	fmt.Println("add-to 用法（追加收件人，不覆蓋）：")
-	fmt.Println("  filecheck mail add-to user@example.com")
-	fmt.Println("  filecheck mail add-to --to user@example.com")
+	fmt.Println("  filecheck add-to user@example.com")
+	fmt.Println("  filecheck add-to --to user@example.com")
 	fmt.Println()
 	fmt.Println("send 參數：")
 	w3 := tabwriter.NewWriter(os.Stdout, 2, 0, 2, ' ', 0)
@@ -573,23 +306,23 @@ func printMailHelp() {
 	fmt.Println()
 	fmt.Println("範例：")
 	fmt.Println("  # 啟用 filecheck 郵件，設定收件人與時間")
-	fmt.Println("  filecheck mail enable --to admin@example.com --schedule 10:00")
+	fmt.Println("  filecheck enable --to admin@example.com --schedule 10:00")
 	fmt.Println()
 	fmt.Println("  # 追加收件人")
-	fmt.Println("  filecheck mail add-to another@example.com")
+	fmt.Println("  filecheck add-to another@example.com")
 	fmt.Println()
 	fmt.Println("  # 停用 filecheck 郵件")
-	fmt.Println("  filecheck mail disable")
+	fmt.Println("  filecheck disable")
 	fmt.Println()
 	fmt.Println("  # 立即掃描昨天並寄送 filecheck 報告")
-	fmt.Println("  filecheck mail send")
+	fmt.Println("  filecheck send")
 	fmt.Println()
 	fmt.Println("  # 掃描並寄送指定日期的報告")
-	fmt.Println("  filecheck mail send --day 2026-03-01")
+	fmt.Println("  filecheck send --day 2026-03-01")
 	fmt.Println()
 	fmt.Println("與 mail 指令的差異：")
-	fmt.Println("  mail send            寄送 xwatch-watch-logs（檔案系統監控日誌，含 zip 附件）")
-	fmt.Println("  filecheck mail send  寄送目錄檔案存在性結果（YYYY-DD-MM 格式比對，純文字）")
+	fmt.Println("  mail send       寄送 xwatch-watch-logs（檔案系統監控日誌，含 zip 附件）")
+	fmt.Println("  filecheck send  寄送目錄檔案存在性結果（YYYY-DD-MM 格式比對，純文字）")
 }
 
 //  工具函式

@@ -289,8 +289,8 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 	}})
 
 	reg.Register(cli.CommandFunc{CommandName: "filecheck", Fn: func(args []string) error {
-		// 只有 start 子指令需要服務已安裝
-		if len(args) > 0 && strings.ToLower(args[0]) == "start" {
+		// 只有 enable 子指令需要服務已安裝
+		if len(args) > 0 && strings.ToLower(args[0]) == "enable" {
 			if err := c.requireServiceInstalled("目錄檔案檢查"); err != nil {
 				return err
 			}
@@ -395,8 +395,8 @@ func (c *cliApp) stopAndUninstall() error {
 	if err := service.Stop(c.serviceName); err != nil && !isServiceMissing(err) && !errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
 		return fmt.Errorf("無法停止服務: %w", err)
 	}
-	c.logOp("remove step", "step", "服務已停止")
-	fmt.Println("[1/4] 服務已停止。")
+	c.logOp("remove step", "step", "XWatch 註冊之 Windows 服務已主動停止")
+	fmt.Println("[1/5] XWatch 註冊之 Windows 服務已主動停止。")
 
 	// 停用所有功能並寫入設定
 	if err := c.disableAllFeaturesOnRemove(); err != nil {
@@ -407,10 +407,10 @@ func (c *cliApp) stopAndUninstall() error {
 	if err := service.Uninstall(c.serviceName); err != nil && !isServiceMissing(err) {
 		return fmt.Errorf("無法移除服務: %w", err)
 	}
-	c.logOp("remove step", "step", "服務已移除")
-	fmt.Println("[4/4] 服務已移除。")
+	c.logOp("remove step", "step", "已移除 XWatch 註冊之 Windows 服務")
+	fmt.Println("[5/5] XWatch 註冊之 Windows 服務已移除。")
 
-	fmt.Println("服務已停止並移除。")
+	fmt.Println("所有服務、排程已停止並移除。")
 	return nil
 }
 
@@ -425,13 +425,19 @@ func (c *cliApp) disableAllFeaturesOnRemove() error {
 
 	// 停用心跳
 	settings.HeartbeatEnabled = false
-	c.logOp("remove step", "step", "心跳已停用")
-	fmt.Println("[2/4] 心跳已停用。")
+	c.logOp("remove step", "step", "heartbeat 已停用")
+	fmt.Println("[2/5] 心跳已停用。")
 
 	// 停用郵件排程
 	settings.Mail.Enabled = config.BoolPtr(false)
-	c.logOp("remove step", "step", "郵件排程已停用")
-	fmt.Println("[3/4] 郵件排程已停用。")
+	c.logOp("remove step", "step", "mail 已停用")
+	fmt.Println("[3/5] mail 已停用。")
+
+	// 停用 filecheck 排程
+	settings.Filecheck.Enabled = false
+	settings.Filecheck.Mail.Enabled = config.BoolPtr(false)
+	c.logOp("remove step", "step", "filecheck 已停用")
+	fmt.Println("[4/5] filecheck 已停用。")
 
 	return config.Save(settings)
 }
