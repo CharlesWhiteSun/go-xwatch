@@ -63,10 +63,11 @@ type MailSettings struct {
 func BoolPtr(b bool) *bool { return &b }
 
 // IsEnabled 回傳郵件排程是否啟用。
-// 若 Enabled 為 nil（從未設定），預設回傳 true。
+// 若 Enabled 為 nil（從未明確設定），預設回傳 false；
+// 必須執行 mail enable 明確設為 true 才會啟用。
 func (m MailSettings) IsEnabled() bool {
 	if m.Enabled == nil {
-		return true
+		return false
 	}
 	return *m.Enabled
 }

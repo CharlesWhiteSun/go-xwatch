@@ -752,3 +752,169 @@ func TestRunnerMail_HotReloadDetectsSmtpChanges(t *testing.T) {
 		t.Fatalf("應有一次以 SMTPHost=smtp2.test.local 呼叫 MailSchedulerFn，實際 smtpHosts=%v", smtpHosts)
 	}
 }
+
+// TestRunnerMail_NilEnabledNotStarted 確認 mail.Enabled=nil（從未設定）時，
+// 服務啟動不自動啟動 mail scheduler，需明確執行 mail enable 才能啟用。
+func TestRunnerMail_NilEnabledNotStarted(t *testing.T) {
+	tmp := t.TempDir()
+	var mu sync.Mutex
+	callCount := 0
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir: tmp,
+			Mail:    config.MailSettings{}, // Enabled = nil（從未設定）
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+			mu.Lock()
+			callCount++
+			mu.Unlock()
+			<-ctx.Done()
+		},
+		MailReloadInterval: 20 * time.Millisecond,
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner error: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if callCount != 0 {
+		t.Fatalf("mail.Enabled=nil 時 MailSchedulerFn 不應被呼叫（需明確 mail enable），但被呼叫了 %d 次", callCount)
+	}
+}
+
+// TestRunnerFreshInitSettings_NoAutoStart 模擬 init --install-service 後
+// 服務啟動時的初始 config（HeartbeatEnabled=false, Mail.Enabled=nil），
+// 確認心跳與郵件排程都不自動啟動。防迴歸問題1&2。
+func TestRunnerFreshInitSettings_NoAutoStart(t *testing.T) {
+	tmp := t.TempDir()
+	var mu sync.Mutex
+	hbLogDirCalled := false
+	mailSchedulerCalled := false
+
+	// 模擬 init --install-service 後儲存的最小 config
+	freshInitSettings := config.Settings{
+		RootDir:           tmp,
+		HeartbeatEnabled:  false,                 // init 預設不開啟心跳
+		HeartbeatInterval: 60,                    // ValidateAndFillDefaults 填入
+		Mail:              config.MailSettings{}, // Enabled=nil，需明確 mail enable
+	}
+
+	r := &Runner{
+		Settings:  freshInitSettings,
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			return nil // 立即結束
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		HeartbeatLogDirFn: func() (string, error) {
+			mu.Lock()
+			hbLogDirCalled = true
+			mu.Unlock()
+			return filepath.Join(tmp, "hb-logs"), nil
+		},
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+			mu.Lock()
+			mailSchedulerCalled = true
+			mu.Unlock()
+			<-ctx.Done()
+		},
+		HeartbeatReloadInterval: 20 * time.Millisecond,
+		MailReloadInterval:      20 * time.Millisecond,
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if hbLogDirCalled {
+		t.Error("init --install-service 後 HeartbeatEnabled=false，HeartbeatLogDirFn 不應被呼叫（心跳不應啟動）")
+	}
+	if mailSchedulerCalled {
+		t.Error("init --install-service 後 Mail.Enabled=nil，MailSchedulerFn 不應被呼叫（需明確 mail enable）")
+	}
+}
+
+// TestRunnerHeartbeat_MailEnableDoesNotTriggerHeartbeat 確認：
+// 服務啟動時 HeartbeatEnabled=false、Mail.Enabled=false，
+// 當 mail 熱重載啟用（hot-reload Mail.Enabled=true）時，
+// 心跳仍不啟動（mail 與 heartbeat 完全獨立）。防迴歸問題2。
+func TestRunnerHeartbeat_MailEnableDoesNotTriggerHeartbeat(t *testing.T) {
+	tmp := t.TempDir()
+	var mu sync.Mutex
+	hbLogDirCalled := false
+	mailSchedulerCalled := false
+	reloadCount := 0
+
+	cfgFn := func() (config.Settings, error) {
+		mu.Lock()
+		reloadCount++
+		enabled := reloadCount > 1 // 第一次 reload 後 mail 啟用
+		mu.Unlock()
+		return config.Settings{
+			RootDir:          tmp,
+			HeartbeatEnabled: false, // 心跳始終停用
+			Mail: config.MailSettings{
+				Enabled:  config.BoolPtr(enabled),
+				Schedule: "23:59",
+				To:       []string{"test@example.com"},
+			},
+		}, nil
+	}
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir:          tmp,
+			HeartbeatEnabled: false,
+			Mail:             config.MailSettings{Enabled: config.BoolPtr(false)},
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			select {
+			case <-time.After(150 * time.Millisecond):
+			case <-ctx.Done():
+			}
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		HeartbeatLogDirFn: func() (string, error) {
+			mu.Lock()
+			hbLogDirCalled = true
+			mu.Unlock()
+			return filepath.Join(tmp, "hb-logs"), nil
+		},
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, _ config.MailSettings, _ func() time.Time) {
+			mu.Lock()
+			mailSchedulerCalled = true
+			mu.Unlock()
+			<-ctx.Done()
+		},
+		ConfigLoadFn:            cfgFn,
+		HeartbeatReloadInterval: 20 * time.Millisecond,
+		MailReloadInterval:      20 * time.Millisecond,
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if hbLogDirCalled {
+		t.Error("mail enable 熱重載不應觸發 heartbeat（HeartbeatEnabled 始終為 false），但 HeartbeatLogDirFn 被呼叫")
+	}
+	if !mailSchedulerCalled {
+		t.Error("mail enable 熱重載應啟動 MailSchedulerFn，但未被呼叫")
+	}
+}

@@ -18,24 +18,6 @@ import (
 	"go-xwatch/internal/mailer"
 )
 
-func TestMailHeartbeatInterval(t *testing.T) {
-	t.Setenv("XWATCH_MAIL_HEARTBEAT_SEC", "5")
-	if got := mailHeartbeatInterval(); got != 5*time.Second {
-		t.Fatalf("heartbeat interval = %s, want 5s", got)
-	}
-}
-
-func TestMailHeartbeatIntervalInvalid(t *testing.T) {
-	t.Setenv("XWATCH_MAIL_HEARTBEAT_SEC", "abc")
-	if got := mailHeartbeatInterval(); got != 0 {
-		t.Fatalf("heartbeat interval for invalid env should be 0, got %s", got)
-	}
-	t.Setenv("XWATCH_MAIL_HEARTBEAT_SEC", "0")
-	if got := mailHeartbeatInterval(); got != 0 {
-		t.Fatalf("heartbeat interval for zero should be 0, got %s", got)
-	}
-}
-
 // ── sendDailyMail 重試邏輯測試 ──────────────────────────────────────
 
 // buildTestMailSettings 建立可測試的最小 MailSettings（使用 tmp 作為 LogDir）。
@@ -291,9 +273,10 @@ func TestSendDailyMail_FailLogShowsAttachmentStatus(t *testing.T) {
 	}
 }
 
-// TestRunMailScheduler_WritesScheduledToMailLog 確認 runMailScheduler 啟動後
-// 立即在 mail log 寫入 scheduled 記錄，讓使用者可查詢排程狀態。
-func TestRunMailScheduler_WritesScheduledToMailLog(t *testing.T) {
+// TestRunMailScheduler_NoScheduledEntryInMailLog 確認排程器啟動後，
+// mail log 不寫入 scheduled 或 heartbeat 記錄（避免使用者誤以為郵件已寄出）。
+// mail log 只記錄實際寄信結果（ok / fail）。
+func TestRunMailScheduler_NoScheduledEntryInMailLog(t *testing.T) {
 	tmp := t.TempDir()
 	mail := config.MailSettings{
 		Enabled:    config.BoolPtr(true),
@@ -316,22 +299,124 @@ func TestRunMailScheduler_WritesScheduledToMailLog(t *testing.T) {
 	defer cancel()
 	runMailScheduler(ctx, logger, mail, time.Now)
 
-	// mail log 應含 scheduled 記錄
+	// mail log 不應含 scheduled 或 heartbeat 記錄
 	entries, err := os.ReadDir(tmp)
 	if err != nil {
 		t.Fatalf("讀取 tmp 目錄失敗：%v", err)
 	}
-	found := false
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), "mail_") && strings.HasSuffix(e.Name(), ".log") {
 			data, _ := os.ReadFile(filepath.Join(tmp, e.Name()))
-			if strings.Contains(string(data), "scheduled") {
-				found = true
-				break
+			content := string(data)
+			if strings.Contains(content, "scheduled") {
+				t.Fatalf("排程器啟動不應在 mail log 寫入 scheduled 記錄，實際內容：\n%s", content)
+			}
+			if strings.Contains(content, "heartbeat") {
+				t.Fatalf("排程器啟動不應在 mail log 寫入 heartbeat 記錄，實際內容：\n%s", content)
 			}
 		}
 	}
-	if !found {
-		t.Fatal("runMailScheduler 啟動後應在 mail log 寫入 scheduled 記錄，但未找到")
+}
+
+// ── 問題 1&3 防迴歸測試 ─────────────────────────────────────────────────────────
+
+// TestNextSendTime_AlwaysReturnsFutureTime 確認 nextSendTime 不論何時呼叫都回傳
+// 嚴格在未來的時間點。防迴歸問題 3：排程器不應在啟動時立即觸發寄信。
+func TestNextSendTime_AlwaysReturnsFutureTime(t *testing.T) {
+	tests := []struct {
+		name     string
+		now      string // "HH:MM:SS"
+		schedule string // "HH:MM"
+	}{
+		{"排程未到今日", "08:00:00", "10:49"},
+		{"排程已過今日", "11:00:00", "10:49"},
+		{"排程恰好這一分鐘", "10:49:00", "10:49"},
+		{"排程同分鐘但秒數已過", "10:49:30", "10:49"},
+		{"午夜排程（上午未觸發）", "08:00:00", "00:00"},
+		{"午夜排程（已過）", "01:00:00", "00:00"},
+	}
+
+	loc := time.UTC
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			nowParsed, err := time.ParseInLocation("2006-01-02 15:04:05", "2026-03-04 "+tc.now, loc)
+			if err != nil {
+				t.Fatalf("parse now: %v", err)
+			}
+			next, err := nextSendTime(nowParsed, tc.schedule, loc)
+			if err != nil {
+				t.Fatalf("nextSendTime error: %v", err)
+			}
+			if !next.After(nowParsed) {
+				t.Errorf("nextSendTime(now=%q, schedule=%q)=%v，應嚴格大於 now=%v",
+					tc.now, tc.schedule, next, nowParsed)
+			}
+		})
+	}
+}
+
+// TestRunMailScheduler_DoesNotSendImmediately 確認排程器啟動後在排程時間到來之前不寄信。
+// 防迴歸問題 3：mail enable 不應立即觸發寄信功能。
+func TestRunMailScheduler_DoesNotSendImmediately(t *testing.T) {
+	tmp := t.TempDir()
+	mail := config.MailSettings{
+		Enabled:    config.BoolPtr(true),
+		To:         []string{"test@example.com"},
+		Schedule:   "23:59", // 遠未來，不會在 200ms 內觸發
+		Subject:    "Test",
+		Body:       "body",
+		LogDir:     tmp,
+		MailLogDir: tmp,
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// nowFn 固定回傳早上 10:55，排程 23:59 絕對在未來
+	nowFn := func() time.Time {
+		return time.Date(2026, 3, 4, 10, 55, 0, 0, time.UTC)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	runMailScheduler(ctx, logger, mail, nowFn)
+
+	// 若有實際寄信，mail log 應有 ok 或 fail 記錄
+	entries, _ := os.ReadDir(tmp)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "mail_") && strings.HasSuffix(e.Name(), ".log") {
+			data, _ := os.ReadFile(filepath.Join(tmp, e.Name()))
+			content := string(data)
+			if strings.Contains(content, "狀態=ok") || strings.Contains(content, "狀態=fail") {
+				t.Fatalf("排程時間未到不應寄信，但 mail log 出現 ok/fail 記錄：\n%s", content)
+			}
+		}
+	}
+}
+
+// TestRunMailScheduler_NoHeartbeatFileCreated 確認 mail 排程器執行期間
+// 不產生 heartbeat 開頭的任何檔案。
+// 防迴歸問題 2：啟動 mail 功能不應啟動 heartbeat。
+func TestRunMailScheduler_NoHeartbeatFileCreated(t *testing.T) {
+	tmp := t.TempDir()
+	mail := config.MailSettings{
+		Enabled:    config.BoolPtr(true),
+		To:         []string{"test@example.com"},
+		Schedule:   "23:59",
+		Subject:    "Test",
+		Body:       "body",
+		LogDir:     tmp,
+		MailLogDir: tmp,
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	runMailScheduler(ctx, logger, mail, time.Now)
+
+	// heartbeat 檔案（格式：heartbeat_YYYY-MM-DD.log）絕對不應出現
+	entries, _ := os.ReadDir(tmp)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "heartbeat_") {
+			t.Fatalf("mail 排程器不應產生 heartbeat 檔案，但找到：%s", e.Name())
+		}
 	}
 }

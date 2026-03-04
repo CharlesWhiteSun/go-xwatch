@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,36 +15,16 @@ import (
 	"go-xwatch/internal/paths"
 )
 
-// runMailScheduler fires daily mail at configured HH:MM in the configured time zone.
+// runMailScheduler 依設定的 HH:MM 時間每日寄信。
+// 流程：計算下次寄信時間 → 等待 → 寄信 → 重複。
+// 不寫任何「排程中」或「心跳」日誌；mail log 只記錄實際寄信結果（ok / fail）。
 func runMailScheduler(ctx context.Context, logger *slog.Logger, mail config.MailSettings, now func() time.Time) {
 	if now == nil {
 		now = time.Now
 	}
 
 	loc := loadLocation(mail.Timezone)
-	logDir := resolveLogDir(mail.LogDir)
-	mailLogDir := resolveLogDir(mail.MailLogDir)
-	if mailLogDir == "" {
-		mailLogDir = logDir
-	}
 
-	if hb := mailHeartbeatInterval(); hb > 0 {
-		go func() {
-			ticker := time.NewTicker(hb)
-			defer ticker.Stop()
-			logger.Info(fmt.Sprintf("啟動排程心跳：間隔=%s", hb))
-			_ = writeMailLog(mailLogDir, time.Now(), "heartbeat", "heartbeat", nil, "mail-scheduler", "none", "")
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case t := <-ticker.C:
-					logger.Info(fmt.Sprintf("排程心跳：%s", t.In(loc).Format("2006-01-02 15:04:05")))
-					_ = writeMailLog(mailLogDir, t, "heartbeat", "heartbeat", nil, "mail-scheduler", "none", "")
-				}
-			}
-		}()
-	}
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error(fmt.Sprintf("每日寄信排程異常 (panic)：%v", r))
@@ -60,15 +39,17 @@ func runMailScheduler(ctx context.Context, logger *slog.Logger, mail config.Mail
 		}
 
 		delay := time.Until(next)
-		if delay < 0 {
-			delay = 0
+		if delay <= 0 {
+			// 正常情況下 nextSendTime 保證 next > now()；
+			// 若因極短的時間競爭導致 delay <= 0，跳過本次改排下一日。
+			logger.Warn("排程時間計算異常（delay <= 0），重新計算下次時間")
+			continue
 		}
 
-		timer := time.NewTimer(delay)
 		nextStr := next.In(loc).Format("2006-01-02 15:04")
-		logger.Info(fmt.Sprintf("已排程每日寄信：%s (%s)", nextStr, loc.String()))
-		_ = writeMailLog(mailLogDir, now(), "scheduled", nextStr, mail.To, mail.Subject, "none",
-			fmt.Sprintf("下次寄信時間：%s (%s)", nextStr, loc.String()))
+		logger.Info(fmt.Sprintf("等待每日寄信：%s (%s)，距今 %s", nextStr, loc.String(), delay.Round(time.Second)))
+
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -221,18 +202,6 @@ func loadLocation(tz string) *time.Location {
 		return time.FixedZone(trimmed, 8*60*60)
 	}
 	return loc
-}
-
-func mailHeartbeatInterval() time.Duration {
-	raw := strings.TrimSpace(os.Getenv("XWATCH_MAIL_HEARTBEAT_SEC"))
-	if raw == "" {
-		return 0
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 {
-		return 0
-	}
-	return time.Duration(n) * time.Second
 }
 
 func renderWithDay(template string, day string, fallback string) string {

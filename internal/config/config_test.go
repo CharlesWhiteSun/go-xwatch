@@ -188,12 +188,12 @@ func TestSMTPTimeoutRetryCustom(t *testing.T) {
 	}
 }
 
-// TestMailEnabledNilDefaultsToTrue 確認 Enabled 為 nil（未設定）時，IsEnabled() 回傳 true。
-// 這代表新安裝後資料已啟用郵件功能，不需領手動 mail enable。
-func TestMailEnabledNilDefaultsToTrue(t *testing.T) {
+// TestMailEnabledNilDefaultsToFalse 確認 Enabled 為 nil（未設定）時，IsEnabled() 回傳 false。
+// 首次安裝未執行 mail enable 時，郵件排程不應自動啟動。
+func TestMailEnabledNilDefaultsToFalse(t *testing.T) {
 	m := MailSettings{} // Enabled 為 nil
-	if !m.IsEnabled() {
-		t.Fatal("Enabled 為 nil 時 IsEnabled() 應回傳 true")
+	if m.IsEnabled() {
+		t.Fatal("Enabled 為 nil 時 IsEnabled() 應回傳 false，郵件必須明確執行 mail enable 才會啟動")
 	}
 }
 
