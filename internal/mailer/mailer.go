@@ -251,20 +251,13 @@ func BuildMIMEMessage(from string, to []string, subject string, body string, att
 
 	if len(attachment) == 0 {
 		var sb strings.Builder
-		headers := map[string]string{
-			"From":                      from,
-			"To":                        strings.Join(to, ", "),
-			"Subject":                   encodeSubject(subject),
-			"MIME-Version":              "1.0",
-			"Content-Type":              "text/plain; charset=UTF-8",
-			"Content-Transfer-Encoding": "7bit",
-		}
-		for k, v := range headers {
-			sb.WriteString(k)
-			sb.WriteString(": ")
-			sb.WriteString(v)
-			sb.WriteString("\r\n")
-		}
+		// RFC 5322 要求標頭以固定順序寫入，避免 map 隨機迭代造成嚴格 SMTP 伺服器拒絕
+		sb.WriteString("From: " + from + "\r\n")
+		sb.WriteString("To: " + strings.Join(to, ", ") + "\r\n")
+		sb.WriteString("Subject: " + encodeSubject(subject) + "\r\n")
+		sb.WriteString("MIME-Version: 1.0\r\n")
+		sb.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+		sb.WriteString("Content-Transfer-Encoding: 7bit\r\n")
 		sb.WriteString("\r\n")
 		sb.WriteString(cleanBody)
 		sb.WriteString("\r\n")
@@ -275,19 +268,12 @@ func BuildMIMEMessage(from string, to []string, subject string, body string, att
 	encodedSubject := encodeSubject(subject)
 	var sb strings.Builder
 
-	headers := map[string]string{
-		"From":         from,
-		"To":           strings.Join(to, ", "),
-		"Subject":      encodedSubject,
-		"MIME-Version": "1.0",
-		"Content-Type": fmt.Sprintf("multipart/mixed; boundary=%s", boundary),
-	}
-	for k, v := range headers {
-		sb.WriteString(k)
-		sb.WriteString(": ")
-		sb.WriteString(v)
-		sb.WriteString("\r\n")
-	}
+	// RFC 5322 要求標頭以固定順序寫入，避免 map 隨機迭代造成嚴格 SMTP 伺服器拒絕
+	sb.WriteString("From: " + from + "\r\n")
+	sb.WriteString("To: " + strings.Join(to, ", ") + "\r\n")
+	sb.WriteString("Subject: " + encodedSubject + "\r\n")
+	sb.WriteString("MIME-Version: 1.0\r\n")
+	sb.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%s\r\n", boundary))
 	sb.WriteString("\r\n")
 
 	sb.WriteString("--")

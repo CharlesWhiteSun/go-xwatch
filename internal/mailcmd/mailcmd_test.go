@@ -350,3 +350,150 @@ func TestPrintMailHelp_DynamicDate(t *testing.T) {
 		t.Errorf("help 輸出不應含舊固定日期 2026-03-02，實際輸出：\n%s", out)
 	}
 }
+
+// ── mail add-to 測試 ───────────────────────────────────────────────
+
+// TestMailAddTo_AppendsRecipients 確認 mail add-to 追加收件人而不覆蓋現有清單。
+func TestMailAddTo_AppendsRecipients(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	setupTestMailConfig(t, tmp, config.MailSettings{
+		To: []string{"alice@example.com"},
+	})
+
+	if err := Run([]string{"add-to", "--to", "bob@example.com"}); err != nil {
+		t.Fatalf("mail add-to failed: %v", err)
+	}
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load failed: %v", err)
+	}
+	if len(loaded.Mail.To) != 2 {
+		t.Fatalf("期望 2 位收件人，實際 %d：%v", len(loaded.Mail.To), loaded.Mail.To)
+	}
+	if loaded.Mail.To[0] != "alice@example.com" {
+		t.Errorf("原有收件人應保留，實際 To[0]=%q", loaded.Mail.To[0])
+	}
+	if loaded.Mail.To[1] != "bob@example.com" {
+		t.Errorf("新收件人應追加，實際 To[1]=%q", loaded.Mail.To[1])
+	}
+}
+
+// TestMailAddTo_DeduplicatesRecipients 確認重複地址只保留一份。
+func TestMailAddTo_DeduplicatesRecipients(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	setupTestMailConfig(t, tmp, config.MailSettings{
+		To: []string{"alice@example.com", "bob@example.com"},
+	})
+
+	// 再次追加已存在的地址
+	if err := Run([]string{"add-to", "--to", "alice@example.com,carol@example.com"}); err != nil {
+		t.Fatalf("mail add-to failed: %v", err)
+	}
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load failed: %v", err)
+	}
+	// alice 不應重複，carol 才是新增的
+	if len(loaded.Mail.To) != 3 {
+		t.Fatalf("期望 3 位收件人（alice/bob/carol），實際 %d：%v", len(loaded.Mail.To), loaded.Mail.To)
+	}
+	found := map[string]bool{}
+	for _, r := range loaded.Mail.To {
+		found[r] = true
+	}
+	for _, want := range []string{"alice@example.com", "bob@example.com", "carol@example.com"} {
+		if !found[want] {
+			t.Errorf("收件人清單缺少 %q，實際：%v", want, loaded.Mail.To)
+		}
+	}
+}
+
+// TestMailAddTo_PositionalArgs 確認 mail add-to 支援直接傳入位置參數（不需 --to）。
+func TestMailAddTo_PositionalArgs(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	setupTestMailConfig(t, tmp, config.MailSettings{
+		To: []string{"alice@example.com"},
+	})
+
+	if err := Run([]string{"add-to", "bob@example.com,carol@example.com"}); err != nil {
+		t.Fatalf("mail add-to positional args failed: %v", err)
+	}
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load failed: %v", err)
+	}
+	if len(loaded.Mail.To) != 3 {
+		t.Fatalf("期望 3 位收件人，實際 %d：%v", len(loaded.Mail.To), loaded.Mail.To)
+	}
+}
+
+// TestMailAddTo_NoArgsReturnsError 確認未提供收件人時回傳錯誤。
+func TestMailAddTo_NoArgsReturnsError(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	setupTestMailConfig(t, tmp, config.MailSettings{})
+
+	if err := Run([]string{"add-to"}); err == nil {
+		t.Fatal("未提供收件人時應回傳錯誤")
+	}
+}
+
+// TestMailSet_ToReplacesRecipients 確認 mail set --to 仍是「覆蓋」語意。
+func TestMailSet_ToReplacesRecipients(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	setupTestMailConfig(t, tmp, config.MailSettings{
+		To: []string{"alice@example.com", "bob@example.com"},
+	})
+
+	if err := Run([]string{"set", "--to", "carol@example.com"}); err != nil {
+		t.Fatalf("mail set --to failed: %v", err)
+	}
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load failed: %v", err)
+	}
+	if len(loaded.Mail.To) != 1 || loaded.Mail.To[0] != "carol@example.com" {
+		t.Fatalf("set --to 應覆蓋原有清單，實際：%v", loaded.Mail.To)
+	}
+}
+
+// TestPrintMailHelp_RemovedAddToFlagExample 確認 help 輸出不含已移除的
+// 「mail add-to --to colleague@example.com」重複範例。
+func TestPrintMailHelp_RemovedAddToFlagExample(t *testing.T) {
+	now := time.Date(2030, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	printMailHelp(now)
+
+	w.Close()
+	os.Stdout = old
+
+	var buf strings.Builder
+	io.Copy(&buf, r)
+	out := buf.String()
+
+	// 移除的範例不應出現
+	if strings.Contains(out, "mail add-to --to colleague@example.com") {
+		t.Errorf("help 輸出不應包含已移除的 '--to colleague@example.com' 範例，實際輸出：\n%s", out)
+	}
+	// 保留的位置參數範例應仍存在
+	if !strings.Contains(out, "mail add-to a@example.com,b@example.com") {
+		t.Errorf("help 輸出應仍含 'mail add-to a@example.com,b@example.com' 範例，實際輸出：\n%s", out)
+	}
+}

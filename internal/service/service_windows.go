@@ -19,6 +19,21 @@ import (
 
 var ErrAlreadyRunning = errors.New("service is already running")
 
+// IsInstalled 回傳 Windows 服務是否已安裝（不代表正在執行）。
+func IsInstalled(name string) bool {
+	m, err := mgr.Connect()
+	if err != nil {
+		return false
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(name)
+	if err != nil {
+		return false
+	}
+	defer s.Close()
+	return true
+}
+
 func IsWindowsServiceProcess() bool {
 	ok, _ := svc.IsWindowsService()
 	return ok

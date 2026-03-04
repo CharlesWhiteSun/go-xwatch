@@ -37,6 +37,8 @@ func Run(args []string) error {
 		return disable()
 	case "set":
 		return set(args)
+	case "add-to":
+		return addTo(args)
 	case "send":
 		return send(args)
 	default:
@@ -100,6 +102,54 @@ func set(args []string) error {
 	}
 	settings.Mail = mail
 	return config.Save(settings)
+}
+
+// addTo 追加收件人至現有清單（不覆蓋），重複地址會自動去除。
+func addTo(args []string) error {
+	fs := flag.NewFlagSet("mail add-to", flag.ContinueOnError)
+	toFlag := fs.String("to", "", "以逗號分隔的收件人（追加，不覆蓋現有清單）")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	// 支援 --to 旗標或直接位置參數
+	rawTo := strings.TrimSpace(*toFlag)
+	if rawTo == "" && len(fs.Args()) > 0 {
+		rawTo = strings.Join(fs.Args(), ",")
+	}
+	if rawTo == "" {
+		return errors.New("請提供至少一個收件人，例如：mail add-to --to a@example.com 或 mail add-to a@example.com")
+	}
+
+	settings, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	newAddrs := splitList(rawTo)
+	existing := settings.Mail.To
+
+	// 去重合併：保留現有順序，僅追加尚未存在的地址
+	seen := make(map[string]struct{}, len(existing))
+	for _, a := range existing {
+		seen[strings.ToLower(strings.TrimSpace(a))] = struct{}{}
+	}
+	added := 0
+	for _, a := range newAddrs {
+		key := strings.ToLower(strings.TrimSpace(a))
+		if _, dup := seen[key]; !dup {
+			existing = append(existing, a)
+			seen[key] = struct{}{}
+			added++
+		}
+	}
+
+	settings.Mail.To = existing
+	if err := config.Save(settings); err != nil {
+		return err
+	}
+	fmt.Printf("已追加 %d 位收件人，目前共 %d 位：%s\n", added, len(existing), strings.Join(existing, ", "))
+	return nil
 }
 
 func send(args []string) error {
@@ -298,6 +348,7 @@ func printMailUsage() {
 	fmt.Println("  mail enable [flags]")
 	fmt.Println("  mail disable")
 	fmt.Println("  mail set [flags]")
+	fmt.Println("  mail add-to [--to] ADDR[,ADDR...]")
 	fmt.Println("  mail send [flags]")
 	fmt.Println("flags 可設定 --to --subject --body --log-dir --mail-log-dir --schedule --tz --host --port --user --pass --from")
 }
@@ -317,15 +368,16 @@ func printMailHelp(now time.Time) {
 	fmt.Println("  enable        啟用每日寄送，接受同 set 的 flags")
 	fmt.Println("  disable       停用每日寄送")
 	fmt.Println("  set           調整設定，不改啟用狀態，flags 如下")
+	fmt.Println("  add-to        追加收件人，不覆蓋現有清單（自動去重）")
 	fmt.Println("  send          依設定立即寄送，可用 flags 暫時覆寫")
 	fmt.Println()
 	fmt.Println("常用 flags：")
-	fmt.Println("  --to a@b,c@d       收件人，逗號分隔")
+	fmt.Println("  --to a@b,c@d       (set/enable) 覆蓋收件人清單；(add-to) 追加收件人")
 	fmt.Println("  --subject TEXT      郵件主旨，可用 {day} 代入日期")
 	fmt.Println("  --body TEXT         郵件內容，可用 {day} 代入日期")
 	fmt.Println("  --log-dir PATH      watch log 來源目錄，預設 %ProgramData%/go-xwatch/xwatch-watch-logs")
 	fmt.Println("  --mail-log-dir PATH 寄信紀錄目錄，預設 %ProgramData%/go-xwatch/xwatch-mail-logs")
-	fmt.Println("  --schedule HH:MM    每日寄送時間，預設 10:00")
+	fmt.Println("  --schedule HH:MM    每日寄送時間，預設 10:00 (24 小時制)")
 	fmt.Println("  --tz TZ             時區，預設 Asia/Taipei")
 	fmt.Println("  --host HOST         SMTP 主機，預設 mail.httc.com.tw")
 	fmt.Println("  --port N            SMTP 連線埠，預設 587")
@@ -340,6 +392,7 @@ func printMailHelp(now time.Time) {
 	fmt.Println()
 	fmt.Println("範例：")
 	fmt.Println("  mail enable --to boss@example.com --user smtp_user --pass smtp_pass")
+	fmt.Println("  mail add-to a@example.com,b@example.com")
 	fmt.Println("  mail set --schedule 09:30 --tz Asia/Taipei --subject 'XWatch 日誌 {day}'")
 	fmt.Println("  mail send --day " + now.AddDate(0, 0, -1).Format("2006-01-02"))
 }

@@ -49,6 +49,9 @@ type cliApp struct {
 	opsLogger   infoLogger
 
 	suppressEmptyHelp bool
+
+	// serviceInstalledFn 用於檢查服務是否已安裝，便於測試注入。nil 時使用 service.IsInstalled。
+	serviceInstalledFn func(name string) bool
 }
 
 func (c *cliApp) run() int {
@@ -146,6 +149,23 @@ func (c *cliApp) logOp(msg string, args ...any) {
 		return
 	}
 	c.opsLogger.Info(msg, args...)
+}
+
+// isServiceInstalled 回傳服務是否已安裝，支援測試注入自訂實作。
+func (c *cliApp) isServiceInstalled() bool {
+	fn := c.serviceInstalledFn
+	if fn == nil {
+		fn = service.IsInstalled
+	}
+	return fn(c.serviceName)
+}
+
+// requireServiceInstalled 如果服務尚未安裝，回傳含操作提示的錯誤。
+func (c *cliApp) requireServiceInstalled(feature string) error {
+	if !c.isServiceInstalled() {
+		return fmt.Errorf("服務尚未安裝，無法啟用%s功能，請先執行『init --install-service』以安裝 Windows 服務", feature)
+	}
+	return nil
 }
 
 func (c *cliApp) runInteractive() error {
@@ -249,10 +269,20 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 	}})
 
 	reg.Register(cli.CommandFunc{CommandName: "mail", Fn: func(args []string) error {
+		if len(args) > 0 && strings.ToLower(args[0]) == "enable" {
+			if err := c.requireServiceInstalled("郵件"); err != nil {
+				return err
+			}
+		}
 		return mailcmd.Run(args)
 	}})
 
 	reg.Register(cli.CommandFunc{CommandName: "heartbeat", Fn: func(args []string) error {
+		if len(args) > 0 && strings.ToLower(args[0]) == "start" {
+			if err := c.requireServiceInstalled("心跳"); err != nil {
+				return err
+			}
+		}
 		return heartbeatcmd.Run(args)
 	}})
 
@@ -314,6 +344,9 @@ func (c *cliApp) initAndExit(rootArg string, installService bool) error {
 func (c *cliApp) printStatus() error {
 	status, err := service.Status(c.serviceName)
 	if err != nil {
+		if isServiceMissing(err) {
+			fmt.Fprintln(os.Stderr, "提示：服務尚未安裝。請先執行『init --install-service』安裝 Windows 服務後，再使用 status 指令查看完整狀態。")
+		}
 		return err
 	}
 	fmt.Println("service:", c.serviceName)

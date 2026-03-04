@@ -7,6 +7,7 @@ import "errors"
 var ErrAlreadyRunning = errors.New("unsupported platform")
 
 func IsWindowsServiceProcess() bool { return false }
+func IsInstalled(_ string) bool     { return false }
 func InstallOrUpdate(_ string, _ string, _ ...string) error {
 	return errors.New("unsupported platform")
 }

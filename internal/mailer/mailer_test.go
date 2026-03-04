@@ -300,3 +300,119 @@ func TestDialAndSend_DefaultTimeout30s(t *testing.T) {
 		t.Fatalf("unexpected error: %v", sendErr)
 	}
 }
+
+// ── 多收件人測試 ───────────────────────────────────────────────────────
+
+// TestBuildMIMEMessage_MultipleRecipients_ToHeader 確認 To header 含所有收件人。
+func TestBuildMIMEMessage_MultipleRecipients_ToHeader(t *testing.T) {
+	to := []string{"a@example.com", "b@example.com", "c@example.com"}
+	msg, err := BuildMIMEMessage("from@example.com", to, "subject", "body", "", nil)
+	if err != nil {
+		t.Fatalf("BuildMIMEMessage error: %v", err)
+	}
+	s := string(msg)
+	want := "To: a@example.com, b@example.com, c@example.com"
+	if !strings.Contains(s, want) {
+		t.Fatalf("To header 應含所有收件人 %q，實際：\n%s", want, s)
+	}
+}
+
+// TestBuildMIMEMessage_HeaderOrder 確認純文字版本的標頭固定順序：
+// From → To → Subject → MIME-Version → Content-Type → Content-Transfer-Encoding。
+func TestBuildMIMEMessage_HeaderOrder(t *testing.T) {
+	msg, err := BuildMIMEMessage("from@example.com", []string{"a@example.com", "b@example.com"},
+		"subject", "body", "", nil)
+	if err != nil {
+		t.Fatalf("BuildMIMEMessage error: %v", err)
+	}
+	s := string(msg)
+
+	fields := []string{"From:", "To:", "Subject:", "MIME-Version:", "Content-Type:", "Content-Transfer-Encoding:"}
+	pos := make([]int, len(fields))
+	for i, f := range fields {
+		pos[i] = strings.Index(s, f)
+		if pos[i] < 0 {
+			t.Fatalf("標頭 %q 不存在，實際：\n%s", f, s)
+		}
+	}
+	for i := 1; i < len(pos); i++ {
+		if pos[i] <= pos[i-1] {
+			t.Fatalf("標頭順序錯誤：%q（位置 %d）應在 %q（位置 %d）之後",
+				fields[i], pos[i], fields[i-1], pos[i-1])
+		}
+	}
+}
+
+// TestBuildMIMEMessage_WithAttachment_HeaderOrder 確認含附件版本的外層標頭固定順序：
+// From → To → Subject → MIME-Version → Content-Type(multipart)。
+func TestBuildMIMEMessage_WithAttachment_HeaderOrder(t *testing.T) {
+	msg, err := BuildMIMEMessage("from@example.com", []string{"a@example.com", "b@example.com"},
+		"subject", "body", "log.zip", []byte{0x01, 0x02})
+	if err != nil {
+		t.Fatalf("BuildMIMEMessage error: %v", err)
+	}
+	s := string(msg)
+
+	fields := []string{"From:", "To:", "Subject:", "MIME-Version:", "Content-Type: multipart/"}
+	pos := make([]int, len(fields))
+	for i, f := range fields {
+		pos[i] = strings.Index(s, f)
+		if pos[i] < 0 {
+			t.Fatalf("標頭 %q 不存在，實際：\n%s", f, s)
+		}
+	}
+	for i := 1; i < len(pos); i++ {
+		if pos[i] <= pos[i-1] {
+			t.Fatalf("標頭順序錯誤：%q（位置 %d）應在 %q（位置 %d）之後",
+				fields[i], pos[i], fields[i-1], pos[i-1])
+		}
+	}
+}
+
+// TestSendGmail_MultipleRecipients 確認多收件人時 sendFn 收到完整的 To slice，
+// 且 MIME 訊息中的 To header 包含所有地址。
+func TestSendGmail_MultipleRecipients(t *testing.T) {
+	tmp := t.TempDir()
+	day := time.Date(2026, 3, 2, 0, 0, 0, 0, time.Local)
+	logPath := filepath.Join(tmp, "watch_2026-03-02.log")
+	if err := os.WriteFile(logPath, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	var capturedTo []string
+	var capturedMsg []byte
+	fake := func(_ string, _ smtp.Auth, _ string, to []string, msg []byte) error {
+		capturedTo = append([]string(nil), to...)
+		capturedMsg = append([]byte(nil), msg...)
+		return nil
+	}
+
+	want := []string{"alice@example.com", "bob@example.com", "carol@example.com"}
+	cfg := SMTPConfig{
+		Host: "smtp.example.com", Port: 587,
+		Username: "user@example.com", Password: "pass",
+		From: "user@example.com", To: want,
+	}
+	opts := ReportOptions{LogDir: tmp, Day: day, Subject: "subject", Body: "body"}
+
+	if err := SendGmail(context.Background(), cfg, opts, fake); err != nil {
+		t.Fatalf("SendGmail error: %v", err)
+	}
+
+	// 驗證 sendFn 收到所有收件人
+	if len(capturedTo) != len(want) {
+		t.Fatalf("期望 %d 位收件人，實際 %d：%v", len(want), len(capturedTo), capturedTo)
+	}
+	for i, r := range want {
+		if capturedTo[i] != r {
+			t.Fatalf("capturedTo[%d]=%q，期望 %q", i, capturedTo[i], r)
+		}
+	}
+
+	// 驗證 MIME To header 包含所有地址
+	s := string(capturedMsg)
+	wantToHeader := "To: alice@example.com, bob@example.com, carol@example.com"
+	if !strings.Contains(s, wantToHeader) {
+		t.Fatalf("MIME 訊息的 To header 應含所有收件人 %q，實際：\n%s", wantToHeader, s)
+	}
+}
