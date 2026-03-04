@@ -309,3 +309,70 @@ func TestSettings_NoDailyCSVFields(t *testing.T) {
 		t.Error("預設 HeartbeatEnabled 應為 false")
 	}
 }
+
+// ── filterValidEmails ─────────────────────────────────────────────────
+
+func TestFilterValidEmails_RemovesInvalidAddresses(t *testing.T) {
+	input := []string{
+		"ADDR[r021@httc.com.tw]", // 含方括號
+		"r021@httc.com.tw",       // 正常
+		"noatsign",               // 無 @
+		"admin@example.com",      // 正常
+		"user @bad.com",          // 含空格
+		"<angle@brackets.com>",   // 含角括號
+	}
+	got := filterValidEmails(input)
+	if len(got) != 2 {
+		t.Errorf("應過濾後剩 2 個有效地址，got %d: %v", len(got), got)
+	}
+	if got[0] != "r021@httc.com.tw" || got[1] != "admin@example.com" {
+		t.Errorf("有效地址不符預期，got %v", got)
+	}
+}
+
+func TestFilterValidEmails_EmptyInput(t *testing.T) {
+	got := filterValidEmails(nil)
+	if got != nil && len(got) != 0 {
+		t.Errorf("空輸入應回傳空，got %v", got)
+	}
+}
+
+func TestFilterValidEmails_AllInvalid_ReturnsEmpty(t *testing.T) {
+	input := []string{"ADDR[bad]", "notanemail", "@missing-local"}
+	got := filterValidEmails(input)
+	if len(got) != 0 {
+		t.Errorf("全部無效時應回傳空切片，got %v", got)
+	}
+}
+
+// ── validateAndFillFilecheckDefaults 清除無效收件人 ──────────────────
+
+func TestFilecheckDefaults_InvalidToAddresses_AreFiltered(t *testing.T) {
+	fc := FilecheckSettings{
+		Mail: FilecheckMailSettings{
+			To: []string{"ADDR[r021@httc.com.tw]", "r021@httc.com.tw"},
+		},
+	}
+	result, err := validateAndFillFilecheckDefaults(fc)
+	if err != nil {
+		t.Fatalf("不應回傳錯誤，got %v", err)
+	}
+	if len(result.Mail.To) != 1 || result.Mail.To[0] != "r021@httc.com.tw" {
+		t.Errorf("應僅保留有效地址，got %v", result.Mail.To)
+	}
+}
+
+func TestFilecheckDefaults_AllInvalidTo_ResultsInEmpty(t *testing.T) {
+	fc := FilecheckSettings{
+		Mail: FilecheckMailSettings{
+			To: []string{"ADDR[bad]", "notvalid"},
+		},
+	}
+	result, err := validateAndFillFilecheckDefaults(fc)
+	if err != nil {
+		t.Fatalf("不應回傳錯誤，got %v", err)
+	}
+	if len(result.Mail.To) != 0 {
+		t.Errorf("全部無效時應為空清單，got %v", result.Mail.To)
+	}
+}

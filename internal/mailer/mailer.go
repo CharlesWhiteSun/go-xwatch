@@ -354,3 +354,49 @@ type fileInfo interface {
 	IsDir() bool
 	Size() int64
 }
+
+// SendTextMail 傳送純文字郵件（無附件），用於 filecheck 報告等不需要 zip 的場景。
+// 若 sendFn 為 nil，預設使用具備 DialTimeout 的自訂撥號函式。
+func SendTextMail(ctx context.Context, cfg SMTPConfig, subject, body string, sendFn SendMailFunc) error {
+	if sendFn == nil {
+		sendFn = dialAndSend(cfg.DialTimeout)
+	}
+	if strings.TrimSpace(cfg.Host) == "" {
+		return errors.New("SMTP host is required")
+	}
+	if cfg.Port <= 0 {
+		return errors.New("SMTP port is required")
+	}
+	if strings.TrimSpace(cfg.Username) == "" {
+		return errors.New("SMTP username is required")
+	}
+	if strings.TrimSpace(cfg.Password) == "" {
+		return errors.New("SMTP password is required")
+	}
+	from := strings.TrimSpace(cfg.From)
+	if from == "" {
+		from = cfg.Username
+	}
+	if len(cfg.To) == 0 {
+		return errors.New("at least one recipient is required")
+	}
+	if strings.TrimSpace(subject) == "" {
+		return errors.New("subject is required")
+	}
+
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+
+	msg, err := BuildMIMEMessage(from, cfg.To, subject, body, "", nil)
+	if err != nil {
+		return err
+	}
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
+	return sendFn(addr, auth, from, cfg.To, msg)
+}

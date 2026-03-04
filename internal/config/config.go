@@ -13,27 +13,59 @@ import (
 )
 
 const (
-	DefaultMailSchedule      = "10:00"
-	DefaultMailTimezone      = "Asia/Taipei"
-	DefaultMailTo            = "r021@httc.com.tw"
-	DefaultMailSubject       = "XWatch 前一日監控日誌"
-	DefaultMailBody          = "附件為前一日的監控日誌。"
-	DefaultSMTPUser          = "notice@mail.httc.com.tw"
-	DefaultSMTPPass          = "Httc24508323"
-	DefaultSMTPHost          = "mail.httc.com.tw"
-	DefaultSMTPPort          = 587
-	DefaultSMTPDialTimeout   = 30  // seconds
-	DefaultSMTPRetries       = 3   // retry attempts after first failure
-	DefaultSMTPRetryDelay    = 120 // seconds between retries
-	DefaultHeartbeatInterval = 60  // seconds
+	DefaultMailSchedule          = "10:00"
+	DefaultMailTimezone          = "Asia/Taipei"
+	DefaultMailTo                = "r021@httc.com.tw"
+	DefaultMailSubject           = "XWatch 前一日監控日誌"
+	DefaultMailBody              = "附件為前一日的監控日誌。"
+	DefaultSMTPUser              = "notice@mail.httc.com.tw"
+	DefaultSMTPPass              = "Httc24508323"
+	DefaultSMTPHost              = "mail.httc.com.tw"
+	DefaultSMTPPort              = 587
+	DefaultSMTPDialTimeout       = 30  // seconds
+	DefaultSMTPRetries           = 3   // retry attempts after first failure
+	DefaultSMTPRetryDelay        = 120 // seconds between retries
+	DefaultHeartbeatInterval     = 60  // seconds
+	DefaultFilecheckMailSchedule = "10:00"
 )
 
 type Settings struct {
-	RootDir           string       `json:"rootDir"`
-	HeartbeatEnabled  bool         `json:"heartbeatEnabled"`
-	HeartbeatInterval int          `json:"heartbeatInterval"`
-	Mail              MailSettings `json:"mail"`
-	UpdatedAt         time.Time    `json:"updatedAt"`
+	RootDir           string            `json:"rootDir"`
+	HeartbeatEnabled  bool              `json:"heartbeatEnabled"`
+	HeartbeatInterval int               `json:"heartbeatInterval"`
+	Mail              MailSettings      `json:"mail"`
+	Filecheck         FilecheckSettings `json:"filecheck"`
+	UpdatedAt         time.Time         `json:"updatedAt"`
+}
+
+// FilecheckSettings 設定目錄檔案存在性排程掃描功能。
+type FilecheckSettings struct {
+	// Enabled 是否啟用，預設 false，須服務安裝後才能啟動。
+	Enabled bool `json:"enabled"`
+	// ScanDir 要掃描的目錄路徑。相對路徑以 rootDir 為基底解析。
+	// 空值代表使用預設路徑：{rootDir}\storage\logs。
+	ScanDir string `json:"scanDir"`
+	// Mail filecheck 結果的郵件通知設定（獨立於 watch log 郵件）。
+	Mail FilecheckMailSettings `json:"mail"`
+}
+
+// FilecheckMailSettings 設定 filecheck 專屬的郵件通知。
+// SMTP 連線設定繼承自 Settings.Mail（共用 SMTP 伺服器）。
+type FilecheckMailSettings struct {
+	// Enabled 使用指標，nil 代表從未設定預設 false，需明確 enable。
+	Enabled *bool `json:"enabled,omitempty"`
+	// Schedule 每日寄送時間（HH:MM），預設 10:00。
+	Schedule string   `json:"schedule"`
+	Timezone string   `json:"timezone"`
+	To       []string `json:"to"`
+}
+
+// IsEnabled 回傳 filecheck 郵件是否啟用。
+func (m FilecheckMailSettings) IsEnabled() bool {
+	if m.Enabled == nil {
+		return false
+	}
+	return *m.Enabled
 }
 
 type MailSettings struct {
@@ -128,7 +160,47 @@ func ValidateAndFillDefaults(s Settings) (Settings, error) {
 	}
 	s.Mail = mail
 
+	filecheck, err := validateAndFillFilecheckDefaults(s.Filecheck)
+	if err != nil {
+		return s, err
+	}
+	s.Filecheck = filecheck
+
 	return s, nil
+}
+
+func validateAndFillFilecheckDefaults(fc FilecheckSettings) (FilecheckSettings, error) {
+	// Mail 排程預設
+	trimSched := strings.TrimSpace(fc.Mail.Schedule)
+	if trimSched == "" {
+		trimSched = DefaultFilecheckMailSchedule
+	}
+	if _, err := time.Parse("15:04", trimSched); err != nil {
+		return fc, fmt.Errorf("filecheck.mail.schedule must be HH:MM: %w", err)
+	}
+	fc.Mail.Schedule = trimSched
+
+	if strings.TrimSpace(fc.Mail.Timezone) == "" {
+		fc.Mail.Timezone = DefaultMailTimezone
+	}
+
+	// 清除格式不合法的收件人（如 ADDR[...] 或其他無 @ 的字串）
+	fc.Mail.To = filterValidEmails(fc.Mail.To)
+
+	return fc, nil
+}
+
+// filterValidEmails 過濾 email 清單，移除不包含 @ 或含括號/空格的無效項目。
+func filterValidEmails(addrs []string) []string {
+	var out []string
+	for _, a := range addrs {
+		trimmed := strings.TrimSpace(a)
+		at := strings.Index(trimmed, "@")
+		if at > 0 && at < len(trimmed)-1 && !strings.ContainsAny(trimmed, " []()<>") {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func configPath() (string, error) {

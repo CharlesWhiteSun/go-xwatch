@@ -31,6 +31,7 @@ type Runner struct {
 	ConfigLoadFn            func() (config.Settings, error)                                                                                // 測試時可覆寫，預設使用 config.Load
 	HeartbeatReloadInterval time.Duration                                                                                                  // 心跳熱重載間隔，預設 30s，測試時可縮短
 	MailReloadInterval      time.Duration                                                                                                  // 郵件排程熱重載間隔，預設 30s，測試時可縮短
+	FilecheckReloadInterval time.Duration                                                                                                  // filecheck 熱重載間隔，預設 30s，測試時可縮短
 	MailSchedulerFn         func(ctx context.Context, logger *slog.Logger, mail config.MailSettings, rootDir string, now func() time.Time) // 測試時可覆寫，預設使用 runMailScheduler
 }
 
@@ -72,6 +73,9 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	// 郵件排程管理（支援熱重載）：服務啟動後當 mail 設定改變，不需重啟服務即可生效
 	go r.runMailSchedulerManager(ctx, logger)
+
+	// 目錄檔案檢查管理（支援熱重載）：服務啟動後當 filecheck 設定改變，不需重啟服務即可生效
+	go r.runFilecheckManager(ctx, logger)
 
 	agg := pipeline.NewAggregator()
 	writer := pipeline.NewWriter(pipeline.MultiSink(sinks), logger, 500*time.Millisecond, 5*time.Second)
@@ -217,6 +221,13 @@ func (r *Runner) heartbeatReloadInterval() time.Duration {
 func (r *Runner) mailReloadInterval() time.Duration {
 	if r.MailReloadInterval > 0 {
 		return r.MailReloadInterval
+	}
+	return 30 * time.Second
+}
+
+func (r *Runner) filecheckReloadInterval() time.Duration {
+	if r.FilecheckReloadInterval > 0 {
+		return r.FilecheckReloadInterval
 	}
 	return 30 * time.Second
 }

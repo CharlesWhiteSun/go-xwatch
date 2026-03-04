@@ -375,7 +375,7 @@ func applyFlags(mail *config.MailSettings, args []string) error {
 }
 
 func printMailUsage() {
-	fmt.Println("mail 指令用法：")
+	fmt.Println("mail 指令用法：（管理 watch log 郵件寄送；filecheck 報告請使用 filecheck mail）")
 	fmt.Println("  mail help")
 	fmt.Println("  mail status")
 	fmt.Println("  mail enable [flags]")
@@ -387,7 +387,8 @@ func printMailUsage() {
 }
 
 func printMailHelp(now time.Time) {
-	fmt.Println("mail 指令說明：")
+	fmt.Println("mail 指令說明：（此指令專用於 watch log 郵件寄送）")
+	fmt.Println("注意：filecheck 目錄檔案檢查報告的郵件寄送，請使用 filecheck mail 指令。")
 	fmt.Println()
 	fmt.Println("常用流程：")
 	fmt.Println("  1) 設定並啟用： mail enable --to a@example.com --user smtp_user --pass smtp_pass")

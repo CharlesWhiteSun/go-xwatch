@@ -19,6 +19,7 @@ import (
 	"go-xwatch/internal/config"
 	"go-xwatch/internal/crypto"
 	"go-xwatch/internal/exporter"
+	"go-xwatch/internal/filecheckcmd"
 	"go-xwatch/internal/heartbeatcmd"
 	"go-xwatch/internal/journal"
 	"go-xwatch/internal/mailcmd"
@@ -287,6 +288,16 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 		return heartbeatcmd.Run(args)
 	}})
 
+	reg.Register(cli.CommandFunc{CommandName: "filecheck", Fn: func(args []string) error {
+		// 只有 start 子指令需要服務已安裝
+		if len(args) > 0 && strings.ToLower(args[0]) == "start" {
+			if err := c.requireServiceInstalled("目錄檔案檢查"); err != nil {
+				return err
+			}
+		}
+		return filecheckcmd.Run(args)
+	}})
+
 	return reg
 }
 
@@ -474,8 +485,9 @@ func (c *cliApp) printUsage() {
 	fmt.Fprintln(w, "  remove\t停止並移除服務及所有排程")
 	fmt.Fprintln(w, "  db [help] <subcommand>\t管理事件資料庫")
 	fmt.Fprintln(w, "  export [help] <subcommand>\t匯出監控事件記錄")
-	fmt.Fprintln(w, "  mail [help] <subcommand>\t管理郵件寄送")
+	fmt.Fprintln(w, "  mail [help] <subcommand>\t管理 watch log 郵件寄送")
 	fmt.Fprintln(w, "  heartbeat [help] <subcommand>\t管理心跳測試")
+	fmt.Fprintln(w, "  filecheck [help] <subcommand>\t監控指定目錄內的檔案存在性")
 	_ = w.Flush()
 	fmt.Println("============================================================")
 }
