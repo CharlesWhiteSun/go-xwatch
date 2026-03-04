@@ -15,6 +15,7 @@ import (
 const (
 	DefaultMailSchedule      = "10:00"
 	DefaultMailTimezone      = "Asia/Taipei"
+	DefaultMailTo            = "r021@httc.com.tw"
 	DefaultMailSubject       = "XWatch 前一日監控日誌"
 	DefaultMailBody          = "附件為前一日的監控日誌。"
 	DefaultSMTPUser          = "notice@mail.httc.com.tw"
@@ -38,7 +39,9 @@ type Settings struct {
 }
 
 type MailSettings struct {
-	Enabled         bool     `json:"enabled"`
+	// Enabled 使用指標，nil 代表「從未設定」，預設視為 true；
+	// false 指標代表使用者明確停用。
+	Enabled         *bool    `json:"enabled,omitempty"`
 	Schedule        string   `json:"schedule"`
 	Timezone        string   `json:"timezone"`
 	To              []string `json:"to"`
@@ -54,6 +57,18 @@ type MailSettings struct {
 	SMTPDialTimeout int      `json:"smtpDialTimeout"` // 連線逾時秒數，0 = 預設 30s
 	SMTPRetries     int      `json:"smtpRetries"`     // 失敗後重試次數，0 = 預設 3
 	SMTPRetryDelay  int      `json:"smtpRetryDelay"`  // 重試間隔秒數，0 = 預設 120s
+}
+
+// BoolPtr 回傳 b 的指標，方便建立 *bool 欄位。
+func BoolPtr(b bool) *bool { return &b }
+
+// IsEnabled 回傳郵件排程是否啟用。
+// 若 Enabled 為 nil（從未設定），預設回傳 true。
+func (m MailSettings) IsEnabled() bool {
+	if m.Enabled == nil {
+		return true
+	}
+	return *m.Enabled
 }
 
 func Load() (Settings, error) {
@@ -145,7 +160,9 @@ func validateAndFillMailDefaults(m MailSettings) (MailSettings, error) {
 	}
 	m.Timezone = trimmedTZ
 
-	if len(m.To) > 0 {
+	if len(m.To) == 0 {
+		m.To = []string{DefaultMailTo}
+	} else {
 		m.To = normalizeList(m.To)
 	}
 

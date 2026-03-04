@@ -24,7 +24,7 @@ func TestDefaultLogDir_ReturnsCorrectPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := filepath.Join(tmp, "go-xwatch", "xwatch-heartbeat")
+	want := filepath.Join(tmp, "go-xwatch", "xwatch-heartbeat-logs")
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}

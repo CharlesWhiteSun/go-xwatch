@@ -187,3 +187,82 @@ func TestSMTPTimeoutRetryCustom(t *testing.T) {
 		t.Fatalf("expected SMTPRetryDelay=300, got %d", s.Mail.SMTPRetryDelay)
 	}
 }
+
+// TestMailEnabledNilDefaultsToTrue 確認 Enabled 為 nil（未設定）時，IsEnabled() 回傳 true。
+// 這代表新安裝後資料已啟用郵件功能，不需領手動 mail enable。
+func TestMailEnabledNilDefaultsToTrue(t *testing.T) {
+	m := MailSettings{} // Enabled 為 nil
+	if !m.IsEnabled() {
+		t.Fatal("Enabled 為 nil 時 IsEnabled() 應回傳 true")
+	}
+}
+
+// TestMailEnabledExplicitFalse 確認明確設為 false 時，IsEnabled() 回傳 false。
+// 這代表 mail disable 存檔後載入仍能正確被停用。
+func TestMailEnabledExplicitFalse(t *testing.T) {
+	f := false
+	m := MailSettings{Enabled: &f}
+	if m.IsEnabled() {
+		t.Fatal("明確設為 false 時 IsEnabled() 應回傳 false")
+	}
+}
+
+// TestMailEnabledExplicitTrue 確認明確設為 true 時，IsEnabled() 回傳 true。
+func TestMailEnabledExplicitTrue(t *testing.T) {
+	tr := true
+	m := MailSettings{Enabled: &tr}
+	if !m.IsEnabled() {
+		t.Fatal("明確設為 true 時 IsEnabled() 應回傳 true")
+	}
+}
+
+// TestMailDefaultTo 確認從未設定收件人時，
+// ValidateAndFillDefaults 自動填入 DefaultMailTo。
+func TestMailDefaultTo(t *testing.T) {
+	root := "./foo"
+	s, err := ValidateAndFillDefaults(Settings{RootDir: root})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(s.Mail.To) == 0 {
+		t.Fatal("預期 To 自動填入 DefaultMailTo，實際為空")
+	}
+	if s.Mail.To[0] != DefaultMailTo {
+		t.Fatalf("預期 To[0]=%q，實際=%q", DefaultMailTo, s.Mail.To[0])
+	}
+}
+
+// TestMailDefaultToPreserved 確認自訂 To 不被覆蓋。
+func TestMailDefaultToPreserved(t *testing.T) {
+	root := "./foo"
+	custom := "custom@example.com"
+	s, err := ValidateAndFillDefaults(Settings{RootDir: root, Mail: MailSettings{To: []string{custom}}})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(s.Mail.To) != 1 || s.Mail.To[0] != custom {
+		t.Fatalf("自訂 To 不應被覆蓋，實際=%v", s.Mail.To)
+	}
+}
+
+// TestMailEnabledPersistFalse 確認 Save/Load 後 Enabled=false 能被正確保留。
+// 避免 mail disable 後因預設邏輯而被重新開啟。
+func TestMailEnabledPersistFalse(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	f := false
+	if err := Save(Settings{RootDir: root, Mail: MailSettings{Enabled: &f, To: []string{"a@test.com"}}}); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if loaded.Mail.IsEnabled() {
+		t.Fatal("明確 disable 後 Load 不應自動重新啟用")
+	}
+}

@@ -373,13 +373,45 @@ func (c *cliApp) stopAndUninstall() error {
 	if err := service.Stop(c.serviceName); err != nil && !isServiceMissing(err) && !errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
 		return fmt.Errorf("無法停止服務: %w", err)
 	}
+	c.logOp("remove step", "step", "服務已停止")
+	fmt.Println("[1/4] 服務已停止。")
+
+	// 停用所有功能並寫入設定
+	if err := c.disableAllFeaturesOnRemove(); err != nil {
+		// 停用失敗不中斷移除，記錄後繼續
+		c.logOp("remove step", "step", fmt.Sprintf("停用功能失敗（繼續移除）：%v", err))
+	}
 
 	if err := service.Uninstall(c.serviceName); err != nil && !isServiceMissing(err) {
 		return fmt.Errorf("無法移除服務: %w", err)
 	}
+	c.logOp("remove step", "step", "服務已移除")
+	fmt.Println("[4/4] 服務已移除。")
 
 	fmt.Println("服務已停止並移除。")
 	return nil
+}
+
+// disableAllFeaturesOnRemove 停用心跳與郵件排程，並將結果寫入 ops-log。
+// 若設定檔無法讀取（如首次安裝未完成），直接回傳 nil 不報錯。
+func (c *cliApp) disableAllFeaturesOnRemove() error {
+	settings, err := config.Load()
+	if err != nil {
+		// 設定檔不存在時不視為錯誤
+		return nil
+	}
+
+	// 停用心跳
+	settings.HeartbeatEnabled = false
+	c.logOp("remove step", "step", "心跳已停用")
+	fmt.Println("[2/4] 心跳已停用。")
+
+	// 停用郵件排程
+	settings.Mail.Enabled = config.BoolPtr(false)
+	c.logOp("remove step", "step", "郵件排程已停用")
+	fmt.Println("[3/4] 郵件排程已停用。")
+
+	return config.Save(settings)
 }
 
 func (c *cliApp) clearJournal() error {

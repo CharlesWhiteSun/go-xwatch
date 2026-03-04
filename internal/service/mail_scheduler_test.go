@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/smtp"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -42,7 +43,7 @@ func buildTestMailSettings(t *testing.T) config.MailSettings {
 	t.Helper()
 	tmp := t.TempDir()
 	return config.MailSettings{
-		Enabled:         true,
+		Enabled:         config.BoolPtr(true),
 		To:              []string{"test@example.com"},
 		Schedule:        "10:00",
 		Subject:         "Test 日誌",
@@ -249,7 +250,7 @@ func TestSendDailyMail_FailLogShowsAttachmentStatus(t *testing.T) {
 	}
 
 	mail := config.MailSettings{
-		Enabled:         true,
+		Enabled:         config.BoolPtr(true),
 		To:              []string{"test@example.com"},
 		Subject:         "Test",
 		Body:            "Body",
@@ -287,5 +288,50 @@ func TestSendDailyMail_FailLogShowsAttachmentStatus(t *testing.T) {
 	}
 	if !strings.Contains(line, "錯誤=") {
 		t.Errorf("應有「錯誤=」欄位記錄原因，實際：%s", line)
+	}
+}
+
+// TestRunMailScheduler_WritesScheduledToMailLog 確認 runMailScheduler 啟動後
+// 立即在 mail log 寫入 scheduled 記錄，讓使用者可查詢排程狀態。
+func TestRunMailScheduler_WritesScheduledToMailLog(t *testing.T) {
+	tmp := t.TempDir()
+	mail := config.MailSettings{
+		Enabled:    config.BoolPtr(true),
+		To:         []string{"test@example.com"},
+		Schedule:   "23:59",
+		Subject:    "Test 主旨",
+		Body:       "Test 內文",
+		LogDir:     tmp,
+		MailLogDir: tmp,
+		SMTPHost:   "smtp.test.local",
+		SMTPPort:   25,
+		SMTPUser:   "user@test.local",
+		SMTPPass:   "pass",
+		SMTPFrom:   "user@test.local",
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// 排程時間 23:59，不會在測試期間觸發；ctx 逾時後 scheduler 結束
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	runMailScheduler(ctx, logger, mail, time.Now)
+
+	// mail log 應含 scheduled 記錄
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatalf("讀取 tmp 目錄失敗：%v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "mail_") && strings.HasSuffix(e.Name(), ".log") {
+			data, _ := os.ReadFile(filepath.Join(tmp, e.Name()))
+			if strings.Contains(string(data), "scheduled") {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		t.Fatal("runMailScheduler 啟動後應在 mail log 寫入 scheduled 記錄，但未找到")
 	}
 }

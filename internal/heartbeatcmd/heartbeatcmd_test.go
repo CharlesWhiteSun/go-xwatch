@@ -205,7 +205,7 @@ func TestDefaultLogDir_ContainsXwatchHeartbeat(t *testing.T) {
 	if dir == "" {
 		t.Fatal("expected non-empty log dir")
 	}
-	if !strings.Contains(filepath.ToSlash(dir), "xwatch-heartbeat") {
-		t.Fatalf("expected path to contain xwatch-heartbeat, got: %s", dir)
+	if !strings.Contains(filepath.ToSlash(dir), "xwatch-heartbeat-logs") {
+		t.Fatalf("expected path to contain xwatch-heartbeat-logs, got: %s", dir)
 	}
 }

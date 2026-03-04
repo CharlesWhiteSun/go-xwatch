@@ -75,3 +75,22 @@ func checkFileContains(t *testing.T, path string, wantSub string) {
 	}
 	t.Fatalf("substring %q not found in %s", wantSub, path)
 }
+
+// TestFormatOpsMessage_RemoveStep 確認 "remove step" 訊息格式化正確。
+func TestFormatOpsMessage_RemoveStep(t *testing.T) {
+cases := []struct {
+step string
+want string
+}{
+{"服務已停止", "移除服務：服務已停止"},
+{"心跳已停用", "移除服務：心跳已停用"},
+{"郵件排程已停用", "移除服務：郵件排程已停用"},
+{"服務已移除", "移除服務：服務已移除"},
+}
+for _, tc := range cases {
+got := FormatOpsMessage("remove step", "step", tc.step)
+if got != tc.want {
+t.Fatalf("step=%q got=%q want=%q", tc.step, got, tc.want)
+}
+}
+}

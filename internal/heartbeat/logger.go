@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const defaultLogSubDir = "xwatch-heartbeat"
+const defaultLogSubDir = "xwatch-heartbeat-logs"
 
 // DefaultLogDir 回傳預設心跳 log 目錄路徑：
 // %ProgramData%\go-xwatch\xwatch-heartbeat

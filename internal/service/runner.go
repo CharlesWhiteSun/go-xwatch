@@ -238,19 +238,32 @@ func (r *Runner) mailReloadInterval() time.Duration {
 }
 
 // mailSchedulerKey 記錄影響郵件排程行為的關鍵欄位，用於偵測設定變更。
+// 包含 SMTP 設定，確保 SMTP 變更能觸發熱重載。
 type mailSchedulerKey struct {
-	enabled  bool
-	schedule string
-	to       string // Join 後比對
-	timezone string
+	enabled    bool
+	schedule   string
+	to         string // Join 後比對
+	timezone   string
+	smtpHost   string
+	smtpPort   int
+	smtpUser   string
+	smtpPass   string
+	logDir     string
+	mailLogDir string
 }
 
 func mailKeyFromSettings(s config.Settings) mailSchedulerKey {
 	return mailSchedulerKey{
-		enabled:  s.Mail.Enabled,
-		schedule: s.Mail.Schedule,
-		to:       strings.Join(s.Mail.To, ","),
-		timezone: s.Mail.Timezone,
+		enabled:    s.Mail.IsEnabled(),
+		schedule:   s.Mail.Schedule,
+		to:         strings.Join(s.Mail.To, ","),
+		timezone:   s.Mail.Timezone,
+		smtpHost:   s.Mail.SMTPHost,
+		smtpPort:   s.Mail.SMTPPort,
+		smtpUser:   s.Mail.SMTPUser,
+		smtpPass:   s.Mail.SMTPPass,
+		logDir:     s.Mail.LogDir,
+		mailLogDir: s.Mail.MailLogDir,
 	}
 }
 
@@ -269,7 +282,7 @@ func (r *Runner) runMailSchedulerManager(ctx context.Context, logger *slog.Logge
 
 	startMailFromSettings := func(s config.Settings) {
 		stopMail()
-		if !s.Mail.Enabled {
+		if !s.Mail.IsEnabled() {
 			return
 		}
 		mailCtx, cancel := context.WithCancel(ctx)

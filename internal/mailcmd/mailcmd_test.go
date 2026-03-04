@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,7 +160,7 @@ func TestSendWithGmailFn_FailLogShowsAttachmentStatus(t *testing.T) {
 	tmp := t.TempDir()
 
 	mailSettings := config.MailSettings{
-		Enabled:         true,
+		Enabled:         config.BoolPtr(true),
 		To:              []string{"test@example.com"},
 		Schedule:        "10:00",
 		SMTPDialTimeout: 10,
@@ -212,7 +213,7 @@ func TestSendWithGmailFn_DialTimeoutFromConfig(t *testing.T) {
 
 	const wantTimeoutSec = 15
 	mailSettings := config.MailSettings{
-		Enabled:         true,
+		Enabled:         config.BoolPtr(true),
 		To:              []string{"test@example.com"},
 		Schedule:        "10:00",
 		SMTPDialTimeout: wantTimeoutSec,
@@ -231,5 +232,121 @@ func TestSendWithGmailFn_DialTimeoutFromConfig(t *testing.T) {
 	want := time.Duration(wantTimeoutSec) * time.Second
 	if capturedTimeout != want {
 		t.Errorf("SMTPConfig.DialTimeout = %s，期望 %s", capturedTimeout, want)
+	}
+}
+
+// TestMailEnable_SetsEnabledAndDefaultTo 確認 mail enable 不帶 --to 時：
+// - Enabled 自動設為 true
+// - To 使用 DefaultMailTo（r021@httc.com.tw）
+func TestMailEnable_SetsEnabledAndDefaultTo(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	root := filepath.Join(tmp, "root")
+	// 先建立最小 config（只有 rootDir，未設 to）
+	setupTestMailConfig(t, tmp, config.MailSettings{})
+
+	// 不帶任何 flag 執行 mail enable
+	if err := Run([]string{"enable"}); err != nil {
+		t.Fatalf("mail enable failed: %v", err)
+	}
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load failed: %v", err)
+	}
+	_ = root
+	if !loaded.Mail.IsEnabled() {
+		t.Fatal("mail enable 後 IsEnabled() 應回傳 true")
+	}
+	if len(loaded.Mail.To) == 0 {
+		t.Fatal("mail enable 不帶 --to 時應自動填入 DefaultMailTo，實際 To 為空")
+	}
+	if loaded.Mail.To[0] != config.DefaultMailTo {
+		t.Fatalf("預期 To[0]=%q，實際=%q", config.DefaultMailTo, loaded.Mail.To[0])
+	}
+}
+
+// TestMailSet_ScheduleSaved 確認 mail set --schedule HH:MM 能正確儲存到 config，
+// 模擬「服務安裝前」的設定流程（存入 config.json，服務啟動時讀取）。
+func TestMailSet_ScheduleSaved(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	setupTestMailConfig(t, tmp, config.MailSettings{})
+
+	if err := Run([]string{"set", "--schedule", "09:30"}); err != nil {
+		t.Fatalf("mail set --schedule failed: %v", err)
+	}
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load failed: %v", err)
+	}
+	if loaded.Mail.Schedule != "09:30" {
+		t.Fatalf("預期 Schedule=09:30，實際=%q", loaded.Mail.Schedule)
+	}
+}
+
+// TestMailSet_InvalidScheduleRejected 確認 mail set --schedule 給出非法格式時回傳錯誤。
+func TestMailSet_InvalidScheduleRejected(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	setupTestMailConfig(t, tmp, config.MailSettings{})
+
+	if err := Run([]string{"set", "--schedule", "25:99"}); err == nil {
+		t.Fatal("非法 schedule 應回傳錯誤")
+	}
+}
+
+// TestMailDisable_SetsFalse 確認 mail disable 後 IsEnabled()=false，
+// 且再次 Load 不會自動回復為 true。
+func TestMailDisable_SetsFalse(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	setupTestMailConfig(t, tmp, config.MailSettings{})
+
+	// 先 enable，再 disable
+	if err := Run([]string{"enable"}); err != nil {
+		t.Fatalf("mail enable failed: %v", err)
+	}
+	if err := Run([]string{"disable"}); err != nil {
+		t.Fatalf("mail disable failed: %v", err)
+	}
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load failed: %v", err)
+	}
+	if loaded.Mail.IsEnabled() {
+		t.Fatal("mail disable 後 IsEnabled() 應回傳 false，不應被預設值覆蓋")
+	}
+}
+
+// TestPrintMailHelp_DynamicDate 確認 help 輸出包含前一天日期（動態），且不含舊固定日期。
+func TestPrintMailHelp_DynamicDate(t *testing.T) {
+	now := time.Date(2030, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	printMailHelp(now)
+
+	w.Close()
+	os.Stdout = old
+
+	var buf strings.Builder
+	io.Copy(&buf, r)
+	out := buf.String()
+
+	want := now.AddDate(0, 0, -1).Format("2006-01-02") // "2030-06-14"
+	if !strings.Contains(out, want) {
+		t.Errorf("help 輸出應含 %q，實際輸出：\n%s", want, out)
+	}
+	if strings.Contains(out, "2026-03-02") {
+		t.Errorf("help 輸出不應含舊固定日期 2026-03-02，實際輸出：\n%s", out)
 	}
 }

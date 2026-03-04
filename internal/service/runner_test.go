@@ -394,7 +394,7 @@ func TestRunnerMail_InitiallyEnabled(t *testing.T) {
 		Settings: config.Settings{
 			RootDir: tmp,
 			Mail: config.MailSettings{
-				Enabled:  true,
+				Enabled:  config.BoolPtr(true),
 				Schedule: "00:00",
 				To:       []string{"test@example.com"},
 			},
@@ -438,7 +438,7 @@ func TestRunnerMail_InitiallyDisabled(t *testing.T) {
 	r := &Runner{
 		Settings: config.Settings{
 			RootDir: tmp,
-			Mail:    config.MailSettings{Enabled: false},
+			Mail:    config.MailSettings{Enabled: config.BoolPtr(false)},
 		},
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
 		DataDirFn: func() (string, error) { return tmp, nil },
@@ -483,7 +483,7 @@ func TestRunnerMail_HotReloadEnablesMailScheduler(t *testing.T) {
 		return config.Settings{
 			RootDir: tmp,
 			Mail: config.MailSettings{
-				Enabled:  enabled,
+				Enabled:  config.BoolPtr(enabled),
 				Schedule: "23:59",
 				To:       []string{"test@example.com"},
 			},
@@ -493,7 +493,7 @@ func TestRunnerMail_HotReloadEnablesMailScheduler(t *testing.T) {
 	r := &Runner{
 		Settings: config.Settings{
 			RootDir: tmp,
-			Mail:    config.MailSettings{Enabled: false}, // 初始停用
+			Mail:    config.MailSettings{Enabled: config.BoolPtr(false)}, // 初始停用
 		},
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
 		DataDirFn: func() (string, error) { return tmp, nil },
@@ -543,7 +543,7 @@ func TestRunnerMail_HotReloadDisablesMailScheduler(t *testing.T) {
 		return config.Settings{
 			RootDir: tmp,
 			Mail: config.MailSettings{
-				Enabled:  enabled,
+				Enabled:  config.BoolPtr(enabled),
 				Schedule: "23:59",
 				To:       []string{"test@example.com"},
 			},
@@ -554,7 +554,7 @@ func TestRunnerMail_HotReloadDisablesMailScheduler(t *testing.T) {
 		Settings: config.Settings{
 			RootDir: tmp,
 			Mail: config.MailSettings{
-				Enabled:  true,
+				Enabled:  config.BoolPtr(true),
 				Schedule: "23:59",
 				To:       []string{"test@example.com"},
 			},
@@ -610,7 +610,7 @@ func TestRunnerMail_HotReloadChangesSchedule(t *testing.T) {
 		return config.Settings{
 			RootDir: tmp,
 			Mail: config.MailSettings{
-				Enabled:  true,
+				Enabled:  config.BoolPtr(true),
 				Schedule: schedule,
 				To:       []string{"test@example.com"},
 			},
@@ -621,7 +621,7 @@ func TestRunnerMail_HotReloadChangesSchedule(t *testing.T) {
 		Settings: config.Settings{
 			RootDir: tmp,
 			Mail: config.MailSettings{
-				Enabled:  true,
+				Enabled:  config.BoolPtr(true),
 				Schedule: "10:00",
 				To:       []string{"test@example.com"},
 			},
@@ -664,5 +664,91 @@ func TestRunnerMail_HotReloadChangesSchedule(t *testing.T) {
 	}
 	if !found20 {
 		t.Fatalf("應有一次以 schedule=20:00 呼叫 MailSchedulerFn，實際 schedules=%v", schedules)
+	}
+}
+
+// TestRunnerMail_HotReloadDetectsSmtpChanges 確認 SMTP 設定（如 SMTPHost）改變時，
+// mailSchedulerKey 差異被偵測，排程器以新 SMTP 重啟（不需人工重啟服務）。
+func TestRunnerMail_HotReloadDetectsSmtpChanges(t *testing.T) {
+	tmp := t.TempDir()
+
+	var mu sync.Mutex
+	callCount := 0
+	reloadCallCount := 0
+	var smtpHosts []string
+
+	cfgFn := func() (config.Settings, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		reloadCallCount++
+		host := "smtp1.test.local"
+		if reloadCallCount > 1 {
+			host = "smtp2.test.local"
+		}
+		return config.Settings{
+			RootDir: tmp,
+			Mail: config.MailSettings{
+				Enabled:  config.BoolPtr(true),
+				Schedule: "23:59",
+				To:       []string{"test@example.com"},
+				SMTPHost: host,
+				SMTPPort: 587,
+				SMTPUser: "user@test.local",
+				SMTPPass: "pass",
+			},
+		}, nil
+	}
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir: tmp,
+			Mail: config.MailSettings{
+				Enabled:  config.BoolPtr(true),
+				Schedule: "23:59",
+				To:       []string{"test@example.com"},
+				SMTPHost: "smtp1.test.local",
+				SMTPPort: 587,
+				SMTPUser: "user@test.local",
+				SMTPPass: "pass",
+			},
+		},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		DataDirFn: func() (string, error) { return tmp, nil },
+		WatcherFn: func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+			select {
+			case <-time.After(150 * time.Millisecond):
+			case <-ctx.Done():
+			}
+			return nil
+		},
+		Sinks: []pipeline.EventSink{pipeline.EventSinkFunc(func(_ context.Context, _ []journal.Entry) error { return nil })},
+		MailSchedulerFn: func(ctx context.Context, _ *slog.Logger, mail config.MailSettings, _ func() time.Time) {
+			mu.Lock()
+			callCount++
+			smtpHosts = append(smtpHosts, mail.SMTPHost)
+			mu.Unlock()
+			<-ctx.Done()
+		},
+		ConfigLoadFn:       cfgFn,
+		MailReloadInterval: 20 * time.Millisecond,
+	}
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("runner error: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if callCount < 2 {
+		t.Fatalf("SMTP 設定改變時應重啟排程，MailSchedulerFn 至少呼叫 2 次，實際 %d 次", callCount)
+	}
+	foundSmtp2 := false
+	for _, h := range smtpHosts {
+		if h == "smtp2.test.local" {
+			foundSmtp2 = true
+			break
+		}
+	}
+	if !foundSmtp2 {
+		t.Fatalf("應有一次以 SMTPHost=smtp2.test.local 呼叫 MailSchedulerFn，實際 smtpHosts=%v", smtpHosts)
 	}
 }

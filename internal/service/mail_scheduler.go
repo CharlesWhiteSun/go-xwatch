@@ -65,7 +65,10 @@ func runMailScheduler(ctx context.Context, logger *slog.Logger, mail config.Mail
 		}
 
 		timer := time.NewTimer(delay)
-		logger.Info(fmt.Sprintf("已排程每日寄信：%s (%s)", next.In(loc).Format("2006-01-02 15:04"), loc.String()))
+		nextStr := next.In(loc).Format("2006-01-02 15:04")
+		logger.Info(fmt.Sprintf("已排程每日寄信：%s (%s)", nextStr, loc.String()))
+		_ = writeMailLog(mailLogDir, now(), "scheduled", nextStr, mail.To, mail.Subject, "none",
+			fmt.Sprintf("下次寄信時間：%s (%s)", nextStr, loc.String()))
 		select {
 		case <-ctx.Done():
 			timer.Stop()

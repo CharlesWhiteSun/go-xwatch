@@ -27,7 +27,7 @@ func Run(args []string) error {
 
 	switch sub {
 	case "help":
-		printMailHelp()
+		printMailHelp(time.Now())
 		return nil
 	case "status":
 		return status()
@@ -54,7 +54,7 @@ func status() error {
 	if tz == "" {
 		tz = "Asia/Taipei"
 	}
-	fmt.Println("郵件系統啟用狀態:", mail.Enabled)
+	fmt.Println("郵件系統啟用狀態:", mail.IsEnabled())
 	fmt.Println("寄送時間:", mail.Schedule, "(時區:", tz+")")
 	fmt.Println("收件人:", strings.Join(mail.To, ", "))
 	fmt.Println("主旨:", mail.Subject)
@@ -72,7 +72,7 @@ func enable(args []string) error {
 		return err
 	}
 	mail := settings.Mail
-	mail.Enabled = true
+	mail.Enabled = config.BoolPtr(true)
 	if err := applyFlags(&mail, args); err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func disable() error {
 	if err != nil {
 		return err
 	}
-	settings.Mail.Enabled = false
+	settings.Mail.Enabled = config.BoolPtr(false)
 	return config.Save(settings)
 }
 
@@ -302,7 +302,7 @@ func printMailUsage() {
 	fmt.Println("flags 可設定 --to --subject --body --log-dir --mail-log-dir --schedule --tz --host --port --user --pass --from")
 }
 
-func printMailHelp() {
+func printMailHelp(now time.Time) {
 	fmt.Println("mail 指令說明：")
 	fmt.Println()
 	fmt.Println("常用流程：")
@@ -341,7 +341,7 @@ func printMailHelp() {
 	fmt.Println("範例：")
 	fmt.Println("  mail enable --to boss@example.com --user smtp_user --pass smtp_pass")
 	fmt.Println("  mail set --schedule 09:30 --tz Asia/Taipei --subject 'XWatch 日誌 {day}'")
-	fmt.Println("  mail send --day 2026-03-02")
+	fmt.Println("  mail send --day " + now.AddDate(0, 0, -1).Format("2006-01-02"))
 }
 
 func splitList(v string) []string {

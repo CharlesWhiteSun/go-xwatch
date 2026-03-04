@@ -112,5 +112,5 @@ func printUsage() {
 	fmt.Println("  stop                停止心跳")
 	fmt.Println("  set --interval N    設定心跳間隔秒數（最小 1）")
 	fmt.Println()
-	fmt.Println("  log 目錄: %ProgramData%\\go-xwatch\\xwatch-heartbeat\\heartbeat_YYYY-MM-DD.log")
+	fmt.Println("  log 目錄: %ProgramData%\\go-xwatch\\xwatch-heartbeat-logs\\heartbeat_YYYY-MM-DD.log")
 }

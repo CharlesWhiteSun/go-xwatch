@@ -63,6 +63,8 @@ func FormatOpsMessage(msg string, args ...any) string {
 			return fmt.Sprintf("CLI 結束；代碼=%v；原因=%v", kv["code"], reason)
 		}
 		return fmt.Sprintf("CLI 結束；代碼=%v", kv["code"])
+	case "remove step":
+		return fmt.Sprintf("移除服務：%v", kv["step"])
 	case "service error":
 		return fmt.Sprintf("服務錯誤：%v", kv["err"])
 	case "cli signal":
