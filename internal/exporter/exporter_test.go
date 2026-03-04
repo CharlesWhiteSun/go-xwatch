@@ -3,6 +3,7 @@ package exporter
 import (
 	"bufio"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +58,52 @@ func TestExportJSONL(t *testing.T) {
 	}
 
 	assertFileHasLines(t, outFile, 2, []string{"CREATE", "DELETE"})
+}
+
+// TestExportDefaultPath 確認省略 --out 時，輸出檔案會建立在 xwatch-export-files 子目錄下。
+func TestExportDefaultPath(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	dataDir, err := paths.EnsureDataDir()
+	if err != nil {
+		t.Fatalf("ensure data dir: %v", err)
+	}
+
+	keyPath := filepath.Join(dataDir, "key.bin")
+	key, err := crypto.LoadOrCreateKey(keyPath, 32)
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+
+	j, err := journal.Open(filepath.Join(dataDir, "journal.db"), key)
+	if err != nil {
+		t.Fatalf("open journal: %v", err)
+	}
+	defer j.Close()
+
+	fixedTime := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
+	var capturedPath string
+
+	err = Export("", "", 10, "json", false, false, "",
+		WithNow(func() time.Time { return fixedTime }),
+		WithCreateFile(func(p string) (io.WriteCloser, error) {
+			capturedPath = p
+			return os.Create(p)
+		}),
+	)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	wantDir := filepath.Join(dataDir, "xwatch-export-files")
+	if filepath.Dir(capturedPath) != wantDir {
+		t.Errorf("預設輸出目錄應為 %s，實際為 %s", wantDir, filepath.Dir(capturedPath))
+	}
+	if filepath.Base(capturedPath) != "export_20260304_120000.json" {
+		t.Errorf("預設輸出檔名應為 export_20260304_120000.json，實際為 %s", filepath.Base(capturedPath))
+	}
 }
 
 func assertFileHasLines(t *testing.T, path string, wantLines int, wantSubs []string) {

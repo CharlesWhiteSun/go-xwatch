@@ -101,7 +101,7 @@ func Export(sinceStr, untilStr string, limit int, format string, all, bom bool, 
 	var out io.Writer = optsState.stdout
 	var closeFn func() error
 	if outPath == "" {
-		outPath = filepath.Join(dataDir, fmt.Sprintf("export_%s.%s", optsState.now().Format("20060102_150405"), ext))
+		outPath = filepath.Join(dataDir, "xwatch-export-files", fmt.Sprintf("export_%s.%s", optsState.now().Format("20060102_150405"), ext))
 	}
 	if outPath != "-" {
 		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {

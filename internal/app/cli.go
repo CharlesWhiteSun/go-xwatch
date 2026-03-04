@@ -262,7 +262,7 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 		formatFlag := fs.String("format", "json", "export format: json|jsonl|text")
 		allFlag := fs.Bool("all", false, "export all entries ignoring time filters")
 		bomFlag := fs.Bool("bom", false, "prepend UTF-8 BOM for Windows editors")
-		outFlag := fs.String("out", "", "output file path (use '-' for stdout; default: %ProgramData%/go-xwatch)")
+		outFlag := fs.String("out", "", "output file path (use '-' for stdout; default: %ProgramData%/go-xwatch/xwatch-export-files)")
 		if err := fs.Parse(args); err != nil {
 			return err
 		}
@@ -562,7 +562,7 @@ func printExportHelp() {
 	fmt.Fprintln(w, "  \t  text   人類可讀的文字格式")
 	fmt.Fprintln(w, "  --bom\t在輸出開頭加入 UTF-8 BOM，供 Windows 記事本正確顯示中文。")
 	fmt.Fprintln(w, "  --out PATH\t輸出檔案路徑。使用 '-' 輸出至 stdout。")
-	fmt.Fprintln(w, "  \t省略時自動命名並存入 %ProgramData%\\go-xwatch\\。")
+	fmt.Fprintln(w, "  \t省略時自動命名並存入 %ProgramData%\\go-xwatch\\xwatch-export-files\\。")
 	_ = w.Flush()
 	fmt.Println()
 	fmt.Println("範例：")

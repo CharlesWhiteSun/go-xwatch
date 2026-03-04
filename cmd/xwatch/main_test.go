@@ -221,12 +221,12 @@ func TestExportDefaultPath(t *testing.T) {
 		t.Fatalf("export default path: %v", err)
 	}
 
-	matches, err := filepath.Glob(filepath.Join(dataDir, "export_*.json"))
+	matches, err := filepath.Glob(filepath.Join(dataDir, "xwatch-export-files", "export_*.json"))
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}
 	if len(matches) == 0 {
-		t.Fatalf("expected export file in %s", dataDir)
+		t.Fatalf("expected export file in %s", filepath.Join(dataDir, "xwatch-export-files"))
 	}
 	content, err := os.ReadFile(matches[0])
 	if err != nil {
