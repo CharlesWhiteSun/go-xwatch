@@ -194,10 +194,10 @@ func ValidateAndFillDefaults(s Settings) (Settings, error) {
 		s.HeartbeatInterval = DefaultHeartbeatInterval
 	}
 
-	// 正規化環境識別字串，空值預設為 prod
+	// 正規化環境識別字串，空値或不認識時預設為 dev
 	env := strings.ToLower(strings.TrimSpace(s.Environment))
 	if env != EnvDev && env != EnvProd {
-		env = EnvProd
+		env = EnvDev
 	}
 	s.Environment = env
 
@@ -261,6 +261,19 @@ func configPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "config.json"), nil
+}
+
+// DeleteConfig 刪除設定檔（若不存在則不報錯）。
+// 由 remove 指令在移除服務後呼叫，確保下次 init 以全新預設値重新建立設定。
+func DeleteConfig() error {
+	path, err := configPath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func validateAndFillMailDefaults(m MailSettings, env string) (MailSettings, error) {

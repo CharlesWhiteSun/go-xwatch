@@ -237,7 +237,7 @@ func TestSendWithGmailFn_DialTimeoutFromConfig(t *testing.T) {
 
 // TestMailEnable_SetsEnabledAndDefaultTo 確認 mail enable 不帶 --to 時：
 // - Enabled 自動設為 true
-// - To 使用 DefaultMailTo（r021@httc.com.tw）
+// - To 使用 dev 環境預設清單首位（e003@httc.com.tw）
 func TestMailEnable_SetsEnabledAndDefaultTo(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("ProgramData", tmp)
@@ -262,8 +262,9 @@ func TestMailEnable_SetsEnabledAndDefaultTo(t *testing.T) {
 	if len(loaded.Mail.To) == 0 {
 		t.Fatal("mail enable 不帶 --to 時應自動填入 DefaultMailTo，實際 To 為空")
 	}
-	if loaded.Mail.To[0] != config.DefaultMailTo {
-		t.Fatalf("預期 To[0]=%q，實際=%q", config.DefaultMailTo, loaded.Mail.To[0])
+	wantFirst := config.DefaultMailToListForEnv(config.EnvDev)[0]
+	if loaded.Mail.To[0] != wantFirst {
+		t.Fatalf("預期 To[0]=%q，實際=%q", wantFirst, loaded.Mail.To[0])
 	}
 }
 

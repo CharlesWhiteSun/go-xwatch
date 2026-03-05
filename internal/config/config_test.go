@@ -212,19 +212,21 @@ func TestMailEnabledExplicitTrue(t *testing.T) {
 }
 
 // TestMailDefaultTo 確認從未設定收件人時，
-// ValidateAndFillDefaults 自動填入 DefaultMailToList 全部地址。
+// ValidateAndFillDefaults 依預設環境（dev）自動填入對應清單。
 func TestMailDefaultTo(t *testing.T) {
 	root := "./foo"
 	s, err := ValidateAndFillDefaults(Settings{RootDir: root})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if len(s.Mail.To) != len(DefaultMailToList) {
-		t.Fatalf("預期 To 共 %d 位，實際得 %d位：%v", len(DefaultMailToList), len(s.Mail.To), s.Mail.To)
+	// 預設環境為 dev，收件人清單應與 DefaultMailToListDev 相同
+	want := DefaultMailToListForEnv(EnvDev)
+	if len(s.Mail.To) != len(want) {
+		t.Fatalf("預期 To 共 %d 位（dev 清單），實際得 %d 位：%v", len(want), len(s.Mail.To), s.Mail.To)
 	}
-	for i, want := range DefaultMailToList {
-		if s.Mail.To[i] != want {
-			t.Errorf("預期 To[%d]=%q，實際=%q", i, want, s.Mail.To[i])
+	for i, w := range want {
+		if s.Mail.To[i] != w {
+			t.Errorf("預期 To[%d]=%q，實際=%q", i, w, s.Mail.To[i])
 		}
 	}
 }
@@ -483,12 +485,73 @@ func TestValidateAndFillDefaults_ProdEnv_UsesProdList(t *testing.T) {
 	}
 }
 
-func TestValidateAndFillDefaults_EmptyEnv_DefaultsToProd(t *testing.T) {
+func TestValidateAndFillDefaults_EmptyEnv_DefaultsToDev(t *testing.T) {
 	s, err := ValidateAndFillDefaults(Settings{RootDir: "./foo"})
 	if err != nil {
 		t.Fatalf("不應錯誤：%v", err)
 	}
-	if s.Environment != EnvProd {
-		t.Errorf("環境空時應預設 prod，實際 %q", s.Environment)
+	if s.Environment != EnvDev {
+		t.Errorf("環境空時應預設 dev，實際 %q", s.Environment)
+	}
+	// dev 環境預設收件人不包含 589497@cpc.com.tw
+	for _, addr := range s.Mail.To {
+		if addr == "589497@cpc.com.tw" {
+			t.Errorf("首次初始化（dev）不應含 589497@cpc.com.tw，實際: %v", s.Mail.To)
+		}
+	}
+}
+
+// ── DeleteConfig 測試 ──────────────────────────────────────────────────
+
+func TestDeleteConfig_RemovesConfigFile(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	if err := Save(Settings{RootDir: root}); err != nil {
+		t.Fatalf("Save 失敗: %v", err)
+	}
+
+	p := filepath.Join(tmp, "go-xwatch", "config.json")
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("設定檔應存在: %v", err)
+	}
+
+	if err := DeleteConfig(); err != nil {
+		t.Fatalf("DeleteConfig 失敗: %v", err)
+	}
+
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Errorf("删除後檔案應不存在，實際 err: %v", err)
+	}
+}
+
+func TestDeleteConfig_NoFileIsOK(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	// 未建立設定檔時對呼叫不應報錯
+	if err := DeleteConfig(); err != nil {
+		t.Errorf("DeleteConfig 在檔案不存在時不應回傳錯誤，實際: %v", err)
+	}
+}
+
+func TestDeleteConfig_ThenLoadReturnsError(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	if err := Save(Settings{RootDir: root}); err != nil {
+		t.Fatalf("Save 失敗: %v", err)
+	}
+	if err := DeleteConfig(); err != nil {
+		t.Fatalf("DeleteConfig 失敗: %v", err)
+	}
+	// 删除後 Load 應回傳錯誤
+	if _, err := Load(); err == nil {
+		t.Error("删除設定檔後 Load 應回傳錯誤，實際得 nil")
 	}
 }

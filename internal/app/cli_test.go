@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -365,6 +366,134 @@ func TestInitCommand_HelpSubcommand(t *testing.T) {
 	}
 	if err := cmd.Run([]string{"help"}); err != nil {
 		t.Errorf("init help 不應回傳錯誤，實際：%v", err)
+	}
+}
+
+// ── initAndExit 設定保留與首次初始化測試 ──────────────────────────
+
+// TestInitAndExit_FirstTime_UsesDevEnvironment 確認首次初始化環境預設為 dev。
+func TestInitAndExit_FirstTime_UsesDevEnvironment(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	t.Setenv("XWATCH_NO_PAUSE", "1")
+
+	root := filepath.Join(tmp, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+
+	if err := app.initAndExit(root, false); err != nil {
+		t.Fatalf("initAndExit: %v", err)
+	}
+
+	s, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.Environment != config.EnvDev {
+		t.Errorf("首次初始化環境應為 dev，實際：%q", s.Environment)
+	}
+	// dev 環境不包含 589497@cpc.com.tw
+	for _, addr := range s.Mail.To {
+		if addr == "589497@cpc.com.tw" {
+			t.Errorf("首次初始化 dev 環境不應含 589497@cpc.com.tw，實際：%v", s.Mail.To)
+		}
+	}
+}
+
+// TestInitAndExit_Reinit_PreservesEnvironment 確認再次執行 init 保留已設定的環境。
+func TestInitAndExit_Reinit_PreservesEnvironment(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	t.Setenv("XWATCH_NO_PAUSE", "1")
+
+	root := filepath.Join(tmp, "root")
+	newRoot := filepath.Join(tmp, "newroot")
+	for _, dir := range []string{root, newRoot} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll %s: %v", dir, err)
+		}
+	}
+
+	// 先建立設定，環境為 prod
+	if err := config.Save(config.Settings{RootDir: root, Environment: config.EnvProd}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+
+	// 再次 init 使用新根目錄
+	if err := app.initAndExit(newRoot, false); err != nil {
+		t.Fatalf("initAndExit: %v", err)
+	}
+
+	s, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// 環境應保留為 prod
+	if s.Environment != config.EnvProd {
+		t.Errorf("再次 init 應保留環境 prod，實際：%q", s.Environment)
+	}
+	// 根目錄應已更新
+	if s.RootDir != newRoot {
+		t.Errorf("根目錄應更新為 %q，實際：%q", newRoot, s.RootDir)
+	}
+}
+
+// TestInitAndExit_Reinit_PreservesMailRecipients 確認再次 init 保留已設定的收件人。
+func TestInitAndExit_Reinit_PreservesMailRecipients(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	t.Setenv("XWATCH_NO_PAUSE", "1")
+
+	root := filepath.Join(tmp, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	// 建立含自訂收件人的設定
+	customTo := []string{"admin@example.com", "devops@example.com"}
+	tr := true
+	if err := config.Save(config.Settings{
+		RootDir: root,
+		Mail:    config.MailSettings{Enabled: &tr, To: customTo},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	app := &cliApp{
+		serviceName:        "GoXWatch",
+		serviceInstalledFn: func(_ string) bool { return true },
+	}
+
+	// 再次 init 相同根目錄
+	if err := app.initAndExit(root, false); err != nil {
+		t.Fatalf("initAndExit: %v", err)
+	}
+
+	s, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(s.Mail.To) != len(customTo) {
+		t.Fatalf("再次 init 應保留收件人 %d 位，實際：%v", len(customTo), s.Mail.To)
+	}
+	for i, want := range customTo {
+		if s.Mail.To[i] != want {
+			t.Errorf("收件人[%d] 應為 %q，實際：%q", i, want, s.Mail.To[i])
+		}
 	}
 }
 

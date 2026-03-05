@@ -313,7 +313,17 @@ func (c *cliApp) initAndExit(rootArg string, installService bool) error {
 		return err
 	}
 	fmt.Println("[2/3] 寫入設定檔...")
-	if err := config.Save(config.Settings{RootDir: root}); err != nil {
+	// 嘗試載入既有設定，若存在則保留所有設定僅更新根目錄；
+	// 設定檔不存在（首次初始化或移除後）則以預設値建立（環境預設 dev）。
+	existing, loadErr := config.Load()
+	var settings config.Settings
+	if loadErr == nil {
+		settings = existing
+		settings.RootDir = root
+	} else {
+		settings = config.Settings{RootDir: root}
+	}
+	if err := config.Save(settings); err != nil {
 		return err
 	}
 
@@ -413,6 +423,14 @@ func (c *cliApp) stopAndUninstall() error {
 		return fmt.Errorf("無法移除服務: %w", err)
 	}
 	c.logOp("remove step", "step", "已移除 XWatch 註冊之 Windows 服務")
+
+	// 删除設定檔，確保下次 init 會以全新預設値重新初始化
+	if err := config.DeleteConfig(); err != nil {
+		c.logOp("remove step", "step", fmt.Sprintf("設定檔删除失敗（非致命）：%v", err))
+	} else {
+		c.logOp("remove step", "step", "設定檔已删除")
+	}
+
 	fmt.Println("[5/5] XWatch 註冊之 Windows 服務已移除。")
 
 	fmt.Println("所有服務、排程已停止並移除。")
@@ -499,7 +517,7 @@ func (c *cliApp) printUsage() {
 	fmt.Fprintln(w, "  mail [help] <subcommand>\t郵件排程管理")
 	fmt.Fprintln(w, "  heartbeat [help] <subcommand>\t管理心跳測試")
 	fmt.Fprintln(w, "  filecheck [help] <subcommand>\t監控指定目錄內的檔案存在性")
-	fmt.Fprintln(w, "  env [help] [set dev|prod]\t切換執行環境（dev/prod）")
+	fmt.Fprintln(w, "  env [help] [set dev|prod]\t切換執行環境")
 	_ = w.Flush()
 	fmt.Println("============================================================")
 }

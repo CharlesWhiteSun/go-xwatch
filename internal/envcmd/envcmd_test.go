@@ -15,6 +15,19 @@ func TestRun_HelpDoesNotError(t *testing.T) {
 	}
 }
 
+func TestRun_StatusDoesNotError(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	root := filepath.Join(tmp, "root")
+	if err := config.Save(config.Settings{RootDir: root}); err != nil {
+		t.Fatalf("Save 失敗: %v", err)
+	}
+	if err := Run([]string{"status"}); err != nil {
+		t.Errorf("env status 不應回傳錯誤，got %v", err)
+	}
+}
+
 func TestRun_UnknownSubcommandReturnsError(t *testing.T) {
 	if err := Run([]string{"unknown"}); err == nil {
 		t.Error("未知子指令應回傳錯誤")
@@ -66,6 +79,11 @@ func TestSetEnv_SwitchesToDev(t *testing.T) {
 	if s.Environment != config.EnvDev {
 		t.Errorf("環境應為 dev，實際 %q", s.Environment)
 	}
+	// 切換後 mail 收件人應更新為 dev 預設清單
+	wantTo := config.DefaultMailToListForEnv(config.EnvDev)
+	if len(s.Mail.To) != len(wantTo) {
+		t.Errorf("mail.To 長度應為 %d，實際 %d: %v", len(wantTo), len(s.Mail.To), s.Mail.To)
+	}
 }
 
 func TestSetEnv_SwitchesToProd(t *testing.T) {
@@ -89,6 +107,11 @@ func TestSetEnv_SwitchesToProd(t *testing.T) {
 	}
 	if s.Environment != config.EnvProd {
 		t.Errorf("環境應為 prod，實際 %q", s.Environment)
+	}
+	// 切換後 mail 收件人應更新為 prod 預設清單（含 589497@cpc.com.tw）
+	wantTo := config.DefaultMailToListForEnv(config.EnvProd)
+	if len(s.Mail.To) != len(wantTo) || s.Mail.To[0] != wantTo[0] {
+		t.Errorf("mail.To 應為 prod 預設清單，實際 %v", s.Mail.To)
 	}
 }
 
@@ -116,20 +139,20 @@ func TestSetEnv_SameEnvNoChange(t *testing.T) {
 	}
 }
 
-// TestSetEnv_DoesNotOverwriteExistingRecipients 切換環境不會改寫已設定的收件人。
-func TestSetEnv_DoesNotOverwriteExistingRecipients(t *testing.T) {
+// TestSetEnv_OverwritesRecipientsWithEnvDefault 切換環境時，會以目標環境預設清單覆蓋現有收件人設定。
+func TestSetEnv_OverwritesRecipientsWithEnvDefault(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("ProgramData", tmp)
 	t.Setenv("XWATCH_SKIP_ACL", "1")
 
 	root := filepath.Join(tmp, "root")
-	// 已手動設定收件人
-	customRecipients := []string{"custom@example.com"}
+	// 已手動設定自訂收件人
 	initial := config.Settings{
 		RootDir:     root,
 		Environment: config.EnvProd,
 	}
-	initial.Mail.To = customRecipients
+	initial.Mail.To = []string{"custom@example.com"}
+	initial.Filecheck.Mail.To = []string{"custom@example.com"}
 	if err := config.Save(initial); err != nil {
 		t.Fatalf("Save 失敗: %v", err)
 	}
@@ -143,12 +166,47 @@ func TestSetEnv_DoesNotOverwriteExistingRecipients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load 失敗: %v", err)
 	}
-	// 環境已切換
 	if s.Environment != config.EnvDev {
 		t.Errorf("環境應為 dev，實際 %q", s.Environment)
 	}
-	// 收件人仍為原始設定，未被覆蓋
-	if len(s.Mail.To) != 1 || s.Mail.To[0] != "custom@example.com" {
-		t.Errorf("切換環境不應改寫已設定的收件人，實際 %v", s.Mail.To)
+	// mail.To 應被覆蓋為 dev 預設清單
+	wantTo := config.DefaultMailToListForEnv(config.EnvDev)
+	if len(s.Mail.To) != len(wantTo) {
+		t.Errorf("切換環境應覆蓋 mail.To 為環境預設，實際 %v", s.Mail.To)
+	}
+	// filecheck.mail.To 應被覆蓋為 dev 預設清單
+	if len(s.Filecheck.Mail.To) != len(wantTo) {
+		t.Errorf("切換環境應覆蓋 filecheck.mail.To 為環境預設，實際 %v", s.Filecheck.Mail.To)
+	}
+}
+
+// TestSetEnv_UpdatesFilecheckMailRecipients 切換環境時，filecheck.mail.to 也應同步更新。
+func TestSetEnv_UpdatesFilecheckMailRecipients(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	// 從 dev 出發，filecheck.mail.to 為 dev 清單
+	if err := config.Save(config.Settings{RootDir: root, Environment: config.EnvDev}); err != nil {
+		t.Fatalf("Save 失敗: %v", err)
+	}
+
+	// 切換到 prod
+	if err := setEnv(config.EnvProd); err != nil {
+		t.Fatalf("setEnv prod 失敗: %v", err)
+	}
+
+	s, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load 失敗: %v", err)
+	}
+	wantTo := config.DefaultMailToListForEnv(config.EnvProd)
+	if len(s.Filecheck.Mail.To) != len(wantTo) {
+		t.Errorf("filecheck.mail.To 應為 prod 預設清單長度 %d，實際 %d: %v",
+			len(wantTo), len(s.Filecheck.Mail.To), s.Filecheck.Mail.To)
+	}
+	if len(s.Filecheck.Mail.To) > 0 && s.Filecheck.Mail.To[0] != wantTo[0] {
+		t.Errorf("filecheck.mail.To 首位應為 %q，實際 %q", wantTo[0], s.Filecheck.Mail.To[0])
 	}
 }

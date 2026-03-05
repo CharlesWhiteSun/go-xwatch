@@ -213,11 +213,12 @@ func TestMailSend_DefaultRecipients_UsedWhenNoFlag(t *testing.T) {
 	if err := mailSend(nil, fakeSend); err != nil {
 		t.Fatalf("使用預設收件人時不應失敗，got %v", err)
 	}
-	if len(gotTo) != len(config.DefaultMailToList) {
-		t.Errorf("預期 %d 位收件人，got %d: %v", len(config.DefaultMailToList), len(gotTo), gotTo)
+	wantTo := config.DefaultMailToListForEnv(config.EnvDev)
+	if len(gotTo) != len(wantTo) {
+		t.Errorf("預期 %d 位收件人，got %d: %v", len(wantTo), len(gotTo), gotTo)
 	}
-	if len(gotTo) > 0 && gotTo[0] != config.DefaultMailToList[0] {
-		t.Errorf("預期首位收件人 %q，got %q", config.DefaultMailToList[0], gotTo[0])
+	if len(gotTo) > 0 && gotTo[0] != wantTo[0] {
+		t.Errorf("預期首位收件人 %q，got %q", wantTo[0], gotTo[0])
 	}
 }
 
