@@ -51,3 +51,12 @@ func (r *Registry) Names() []string {
 	}
 	return out
 }
+
+// ServiceAwareRunner 可由指令執行者實作，以宣告哪些子指令必須在 Windows 服務安裝後
+// 才能執行。cli 套件只依賴此抽象介面，不依賴各 *cmd 套件的具體實作細節（DIP）。
+// 各 *cmd 套件自行宣告需求，新增子指令無需修改 cli.go（OCP）。
+type ServiceAwareRunner interface {
+	Run(args []string) error
+	// ServiceRequiredFor 回傳 (中文功能名稱, 需要服務已安裝的子指令名稱清單)。
+	ServiceRequiredFor() (feature string, subcmds []string)
+}

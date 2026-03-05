@@ -261,39 +261,39 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 		return exporter.Export(*sinceFlag, *untilFlag, *limitFlag, *formatFlag, *allFlag, *bomFlag, *outFlag)
 	}})
 
-	reg.Register(cli.CommandFunc{CommandName: "mail", Fn: func(args []string) error {
-		if len(args) > 0 && strings.ToLower(args[0]) == "enable" {
-			if err := c.requireServiceInstalled("郵件"); err != nil {
-				return err
-			}
-		}
-		return mailcmd.Run(args)
-	}})
-
-	reg.Register(cli.CommandFunc{CommandName: "heartbeat", Fn: func(args []string) error {
-		if len(args) > 0 && strings.ToLower(args[0]) == "start" {
-			if err := c.requireServiceInstalled("心跳"); err != nil {
-				return err
-			}
-		}
-		return heartbeatcmd.Run(args)
-	}})
-
-	reg.Register(cli.CommandFunc{CommandName: "filecheck", Fn: func(args []string) error {
-		// 只有 enable 子指令需要服務已安裝
-		if len(args) > 0 && strings.ToLower(args[0]) == "enable" {
-			if err := c.requireServiceInstalled("目錄檔案檢查"); err != nil {
-				return err
-			}
-		}
-		return filecheckcmd.Run(args)
-	}})
+	// 以 ServiceAwareRunner 介面統一處理「特定子指令需服務已安裝」的前置檢查。
+	// 各 *cmd 套件自行聲明需求，cli.go 不再硬編碼個別套件細節（OCP + DIP）。
+	c.registerServiceAware(reg, "mail", mailcmd.Runner)
+	c.registerServiceAware(reg, "heartbeat", heartbeatcmd.Runner)
+	c.registerServiceAware(reg, "filecheck", filecheckcmd.Runner)
 
 	reg.Register(cli.CommandFunc{CommandName: "env", Fn: func(args []string) error {
 		return envcmd.Run(args)
 	}})
 
 	return reg
+}
+
+// registerServiceAware 將實作 cli.ServiceAwareRunner 的指令執行者包裝後
+// 自動插入服務安裝前置檢查，再註冊至 Registry。
+// cli.go 只依賴 cli.ServiceAwareRunner 抽象（DIP），
+// 各 *cmd 套件自行宣告哪些子指令需要服務，新增需求無需修改此方法（OCP）。
+func (c *cliApp) registerServiceAware(reg *cli.Registry, name string, runner cli.ServiceAwareRunner) {
+	feature, subcmds := runner.ServiceRequiredFor()
+	subSet := make(map[string]struct{}, len(subcmds))
+	for _, s := range subcmds {
+		subSet[s] = struct{}{}
+	}
+	reg.Register(cli.CommandFunc{CommandName: name, Fn: func(args []string) error {
+		if len(args) > 0 {
+			if _, needsService := subSet[strings.ToLower(args[0])]; needsService {
+				if err := c.requireServiceInstalled(feature); err != nil {
+					return err
+				}
+			}
+		}
+		return runner.Run(args)
+	}})
 }
 
 func promptNextAction() (string, string) {
