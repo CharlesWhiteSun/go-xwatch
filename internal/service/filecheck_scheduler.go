@@ -10,6 +10,7 @@ import (
 	"go-xwatch/internal/config"
 	"go-xwatch/internal/filecheck"
 	"go-xwatch/internal/mailer"
+	"go-xwatch/internal/mailutil"
 	"go-xwatch/internal/paths"
 )
 
@@ -105,7 +106,7 @@ func runFilecheckMailScheduler(ctx context.Context, logger *slog.Logger, s confi
 		now = time.Now
 	}
 
-	loc := loadLocation(s.Filecheck.Mail.Timezone)
+	loc := mailutil.LoadLocation(s.Filecheck.Mail.Timezone)
 
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -160,7 +161,7 @@ func sendFilecheckMail(ctx context.Context, logger *slog.Logger, s config.Settin
 	fc := s.Filecheck
 	mail := s.Mail
 
-	recipients := normalizeList(fc.Mail.To)
+	recipients := mailutil.NormalizeList(fc.Mail.To)
 	if len(recipients) == 0 {
 		return fmt.Errorf("沒有有效的收件人")
 	}
@@ -182,33 +183,7 @@ func sendFilecheckMail(ctx context.Context, logger *slog.Logger, s config.Settin
 		}
 	}
 
-	host := strings.TrimSpace(mail.SMTPHost)
-	if host == "" {
-		host = config.DefaultSMTPHost
-	}
-	port := mail.SMTPPort
-	if port == 0 {
-		port = config.DefaultSMTPPort
-	}
-	user := strings.TrimSpace(mail.SMTPUser)
-	if user == "" {
-		user = config.DefaultSMTPUser
-	}
-	pass := strings.TrimSpace(mail.SMTPPass)
-	if pass == "" {
-		pass = config.DefaultSMTPPass
-	}
-	from := firstNonEmpty(strings.TrimSpace(mail.SMTPFrom), user)
-
-	cfg := mailer.SMTPConfig{
-		Host:        host,
-		Port:        port,
-		Username:    user,
-		Password:    pass,
-		From:        from,
-		To:          recipients,
-		DialTimeout: time.Duration(mail.SMTPDialTimeout) * time.Second,
-	}
+	cfg := mailutil.ResolveSMTPConfig(mail, recipients)
 
 	logger.Info(fmt.Sprintf("開始寄送 filecheck 報告：day=%s recipients=%s host=%s:%d", dayStr, strings.Join(recipients, ","), cfg.Host, cfg.Port))
 

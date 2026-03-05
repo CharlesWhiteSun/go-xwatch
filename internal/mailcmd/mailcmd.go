@@ -5,14 +5,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"go-xwatch/internal/config"
 	"go-xwatch/internal/mailer"
-	"go-xwatch/internal/paths"
+	"go-xwatch/internal/mailutil"
 )
 
 // sendModeImmediate / sendModeScheduled 分別代表「即時寄送」與「排程寄送」的模式標籤，
@@ -21,28 +20,6 @@ const (
 	sendModeImmediate = "(即時)"
 	sendModeScheduled = "(排程)"
 )
-
-// buildMailContent 依日誌是否存在與寄送模式，自動產生郵件主旨與內文。
-// 若日誌存在，即時模式主旨用空格分隔，排程模式用冒號分隔；兩種模式的內文格式相同。
-// 回傳 attachmentMissing=true 表示無日誌，呼叫端應省略附件。
-func buildMailContent(rootDirName, dayStr, logPath, mode string) (subject, body string, attachmentMissing bool) {
-	info, err := os.Stat(logPath)
-	logMissing := err != nil || info.Size() == 0
-
-	if logMissing {
-		subject = fmt.Sprintf("XWatch %s 資料夾監控日誌%s: %s 無資料夾異動紀錄", rootDirName, mode, dayStr)
-		body = fmt.Sprintf("您好，%s %s 無資料夾異動之紀錄，特此通知。", rootDirName, dayStr)
-		return subject, body, true
-	}
-	// 有日誌：即時模式以空格連接，排程模式以冒號連接
-	if mode == sendModeImmediate {
-		subject = fmt.Sprintf("XWatch %s 資料夾監控日誌%s %s 已撈出資料，詳如內文", rootDirName, mode, dayStr)
-	} else {
-		subject = fmt.Sprintf("XWatch %s 資料夾監控日誌%s: %s 已撈出資料，詳如內文", rootDirName, mode, dayStr)
-	}
-	body = fmt.Sprintf("您好，附件為 %s %s 之資料夾監控日誌壓縮檔，請卓參。", rootDirName, dayStr)
-	return subject, body, false
-}
 
 // Run handles mail subcommands.
 func Run(args []string) error {
@@ -218,10 +195,10 @@ func sendWithGmailFn(args []string, gmailFn func(ctx context.Context, cfg mailer
 	}
 	// --subject / --body 旗標不直接寫入 mail，改在 buildMailContent 之後覆蓋
 	if v := strings.TrimSpace(*logDirFlag); v != "" {
-		mail.LogDir = makeAbsPath(v)
+		mail.LogDir = mailutil.MakeAbsPath(v)
 	}
 	if v := strings.TrimSpace(*mailLogDirFlag); v != "" {
-		mail.MailLogDir = makeAbsPath(v)
+		mail.MailLogDir = mailutil.MakeAbsPath(v)
 	}
 	if v := strings.TrimSpace(*hostFlag); v != "" {
 		mail.SMTPHost = v
@@ -239,7 +216,7 @@ func sendWithGmailFn(args []string, gmailFn func(ctx context.Context, cfg mailer
 		mail.SMTPFrom = v
 	}
 
-	loc := loadLocation(mail.Timezone)
+	loc := mailutil.LoadLocation(mail.Timezone)
 	targetDay := time.Now().In(loc).AddDate(0, 0, -1)
 	if v := strings.TrimSpace(*dayFlag); v != "" {
 		parsed, err := time.ParseInLocation("2006-01-02", v, loc)
@@ -250,8 +227,8 @@ func sendWithGmailFn(args []string, gmailFn func(ctx context.Context, cfg mailer
 	}
 	dayStr := targetDay.Format("2006-01-02")
 
-	logDir := resolveLogDir(mail.LogDir)
-	mailLogDir := resolveLogDir(mail.MailLogDir)
+	logDir := mailutil.ResolveLogDir(mail.LogDir)
+	mailLogDir := mailutil.ResolveLogDir(mail.MailLogDir)
 	if mailLogDir == "" {
 		mailLogDir = logDir
 	}
@@ -262,7 +239,7 @@ func sendWithGmailFn(args []string, gmailFn func(ctx context.Context, cfg mailer
 		rootDirName = "XWatch"
 	}
 	logPath := filepath.Join(logDir, fmt.Sprintf("watch_%s.log", dayStr))
-	subject, body, attachmentMissing := buildMailContent(rootDirName, dayStr, logPath, sendModeImmediate)
+	subject, body, attachmentMissing := mailutil.BuildMailContent(rootDirName, dayStr, logPath, sendModeImmediate, true)
 	// 若使用者明確提供 --subject 或 --body 旗標，以旗標值覆蓋自動產生的內容
 	if v := strings.TrimSpace(*subjectFlag); v != "" {
 		subject = v
@@ -271,7 +248,7 @@ func sendWithGmailFn(args []string, gmailFn func(ctx context.Context, cfg mailer
 		body = v
 	}
 
-	recipients := normalizeList(mail.To)
+	recipients := mailutil.NormalizeList(mail.To)
 	if len(recipients) == 0 {
 		return errors.New("請提供收件人 (config 或 --to)")
 	}
@@ -306,10 +283,10 @@ func sendWithGmailFn(args []string, gmailFn func(ctx context.Context, cfg mailer
 
 	if err := gmailFn(context.Background(), cfg, opts, nil); err != nil {
 		// 寄信失敗時記錄真實附件狀況，錯誤原因由「錯誤=」欄位描述
-		_ = writeMailLog(mailLogDir, time.Now(), "fail", dayStr, recipients, subject, attachmentStatus, err.Error())
+		_ = mailutil.WriteMailLog(mailLogDir, time.Now(), "fail", dayStr, recipients, subject, attachmentStatus, err.Error())
 		return err
 	}
-	_ = writeMailLog(mailLogDir, time.Now(), "ok", dayStr, recipients, subject, attachmentStatus, "")
+	_ = mailutil.WriteMailLog(mailLogDir, time.Now(), "ok", dayStr, recipients, subject, attachmentStatus, "")
 	fmt.Println("郵件已送出 (若附件缺漏會自動省略)。")
 	return nil
 }
@@ -342,10 +319,10 @@ func applyFlags(mail *config.MailSettings, args []string) error {
 		mail.Body = v
 	}
 	if v := strings.TrimSpace(*logDirFlag); v != "" {
-		mail.LogDir = makeAbsPath(v)
+		mail.LogDir = mailutil.MakeAbsPath(v)
 	}
 	if v := strings.TrimSpace(*mailLogDirFlag); v != "" {
-		mail.MailLogDir = makeAbsPath(v)
+		mail.MailLogDir = mailutil.MakeAbsPath(v)
 	}
 	if v := strings.TrimSpace(*scheduleFlag); v != "" {
 		if _, err := time.Parse("15:04", v); err != nil {
@@ -451,62 +428,6 @@ func splitList(v string) []string {
 	return out
 }
 
-func renderWithDay(template string, day string, fallback string) string {
-	trimmed := strings.TrimSpace(template)
-	if trimmed == "" {
-		return fallback
-	}
-	if strings.Contains(trimmed, "{day}") {
-		return strings.ReplaceAll(trimmed, "{day}", day)
-	}
-	if strings.Contains(trimmed, "%s") {
-		return fmt.Sprintf(trimmed, day)
-	}
-	return fmt.Sprintf("%s %s", trimmed, day)
-}
-
-func makeAbsPath(path string) string {
-	trimmed := strings.TrimSpace(path)
-	if trimmed == "" {
-		return ""
-	}
-	abs, err := filepath.Abs(trimmed)
-	if err != nil {
-		return trimmed
-	}
-	return abs
-}
-
-func resolveLogDir(path string) string {
-	if strings.TrimSpace(path) == "" {
-		dataDir, err := paths.DataDir()
-		if err != nil {
-			return ""
-		}
-		return filepath.Join(dataDir, "xwatch-watch-logs")
-	}
-	return makeAbsPath(path)
-}
-
-func loadLocation(tz string) *time.Location {
-	trimmed := strings.TrimSpace(tz)
-	if trimmed == "" {
-		trimmed = "Asia/Taipei"
-	}
-	loc, err := time.LoadLocation(trimmed)
-	if err != nil {
-		return time.FixedZone(trimmed, 8*60*60)
-	}
-	return loc
-}
-
-func ensureDir(path string) {
-	if strings.TrimSpace(path) == "" {
-		return
-	}
-	_ = os.MkdirAll(path, 0o755)
-}
-
 func normalizeHost(host string) string {
 	h := strings.TrimSpace(host)
 	if h == "" || isGmailHost(h) {
@@ -523,7 +444,7 @@ func normalizePort(port int) int {
 }
 
 func normalizeUser(user string, from string) string {
-	candidate := strings.TrimSpace(firstNonEmpty(user, from, config.DefaultSMTPUser))
+	candidate := strings.TrimSpace(mailutil.FirstNonEmpty(user, from, config.DefaultSMTPUser))
 	if isGmailAddress(candidate) {
 		return config.DefaultSMTPUser
 	}
@@ -539,7 +460,7 @@ func normalizePass(pass string) string {
 }
 
 func normalizeFrom(from string, user string) string {
-	candidate := strings.TrimSpace(firstNonEmpty(from, user, config.DefaultSMTPUser))
+	candidate := strings.TrimSpace(mailutil.FirstNonEmpty(from, user, config.DefaultSMTPUser))
 	if isGmailAddress(candidate) {
 		return user
 	}
@@ -554,70 +475,4 @@ func isGmailHost(host string) bool {
 func isGmailAddress(addr string) bool {
 	a := strings.ToLower(strings.TrimSpace(addr))
 	return strings.HasSuffix(a, "@gmail.com") || strings.HasSuffix(a, "@googlemail.com")
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-func normalizeList(values []string) []string {
-	var out []string
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			out = append(out, strings.TrimSpace(v))
-		}
-	}
-	return out
-}
-
-func prepareBody(logPath string, day string, template string, defaultBody string, missingBody string) (string, bool) {
-	info, err := os.Stat(logPath)
-	missing := err != nil || info.Size() == 0
-	base := renderWithDay(template, day, defaultBody)
-	if missing {
-		if strings.TrimSpace(template) == "" {
-			return missingBody, true
-		}
-		return fmt.Sprintf("%s\n\n(未附檔，無可用日誌)", base), true
-	}
-	return base, false
-}
-
-func writeMailLog(dir string, now time.Time, status string, day string, recipients []string, subject string, attachmentStatus string, errMsg string) error {
-	if strings.TrimSpace(dir) == "" {
-		return nil
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	loc := time.FixedZone("CST", 8*60*60)
-	localTime := now.In(loc)
-	file := filepath.Join(dir, fmt.Sprintf("mail_%s.log", localTime.Format("2006-01-02")))
-
-	statusText := map[string]string{"ok": "成功", "fail": "失敗"}[status]
-	if statusText == "" {
-		statusText = status
-	}
-	attachmentText := map[string]string{"attached": "已附檔", "missing": "未附檔", "error": "失敗"}[attachmentStatus]
-	if attachmentText == "" {
-		attachmentText = attachmentStatus
-	}
-
-	line := fmt.Sprintf("%s | 狀態=%s | 日期=%s | 收件人=%s | 主旨=%s | 附件=%s", localTime.Format("2006-01-02 15:04:05.000"), statusText, day, strings.Join(recipients, ","), subject, attachmentText)
-	if strings.TrimSpace(errMsg) != "" {
-		line += " | 錯誤=" + errMsg
-	}
-	line += "\n"
-	f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = f.WriteString(line)
-	return err
 }
