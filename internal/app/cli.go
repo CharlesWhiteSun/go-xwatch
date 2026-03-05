@@ -18,6 +18,7 @@ import (
 	"go-xwatch/internal/cli"
 	"go-xwatch/internal/config"
 	"go-xwatch/internal/crypto"
+	"go-xwatch/internal/envcmd"
 	"go-xwatch/internal/exporter"
 	"go-xwatch/internal/filecheckcmd"
 	"go-xwatch/internal/heartbeatcmd"
@@ -298,6 +299,10 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 		return filecheckcmd.Run(args)
 	}})
 
+	reg.Register(cli.CommandFunc{CommandName: "env", Fn: func(args []string) error {
+		return envcmd.Run(args)
+	}})
+
 	return reg
 }
 
@@ -494,6 +499,7 @@ func (c *cliApp) printUsage() {
 	fmt.Fprintln(w, "  mail [help] <subcommand>\t郵件排程管理")
 	fmt.Fprintln(w, "  heartbeat [help] <subcommand>\t管理心跳測試")
 	fmt.Fprintln(w, "  filecheck [help] <subcommand>\t監控指定目錄內的檔案存在性")
+	fmt.Fprintln(w, "  env [help] [set dev|prod]\t切換執行環境（dev/prod）")
 	_ = w.Flush()
 	fmt.Println("============================================================")
 }

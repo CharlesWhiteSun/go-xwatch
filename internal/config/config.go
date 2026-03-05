@@ -12,14 +12,42 @@ import (
 	"go-xwatch/internal/paths"
 )
 
-// DefaultMailToList 為 mail 與 filecheck 郵件通知的預設收件人清單。
-var DefaultMailToList = []string{
+const (
+	// EnvDev 為開發環境識別字串。
+	EnvDev = "dev"
+	// EnvProd 為正式環境識別字串。
+	EnvProd = "prod"
+)
+
+// DefaultMailToListDev 為開發環境的預設收件人清單。
+var DefaultMailToListDev = []string{
+	"e003@httc.com.tw",
+	"ken@mail.httc.com.tw",
+	"e032@httc.com.tw",
+	"e024@httc.com.tw",
+}
+
+// DefaultMailToListProd 為正式環境的預設收件人清單。
+var DefaultMailToListProd = []string{
 	"589497@cpc.com.tw",
 	"e003@httc.com.tw",
 	"ken@mail.httc.com.tw",
 	"e032@httc.com.tw",
 	"e024@httc.com.tw",
 }
+
+// DefaultMailToListForEnv 依環境名稱回傳對應的預設收件人清單副本。
+// env 為空或不認識時，回傳正式環境清單。
+func DefaultMailToListForEnv(env string) []string {
+	if strings.EqualFold(env, EnvDev) {
+		return append([]string(nil), DefaultMailToListDev...)
+	}
+	return append([]string(nil), DefaultMailToListProd...)
+}
+
+// DefaultMailToList 保留為回溯相容，等同正式環境清單。
+// 新程式碼請使用 DefaultMailToListForEnv。
+var DefaultMailToList = DefaultMailToListProd
 
 const (
 	DefaultMailSchedule          = "10:00"
@@ -44,7 +72,10 @@ type Settings struct {
 	HeartbeatInterval int               `json:"heartbeatInterval"`
 	Mail              MailSettings      `json:"mail"`
 	Filecheck         FilecheckSettings `json:"filecheck"`
-	UpdatedAt         time.Time         `json:"updatedAt"`
+	// Environment 目前執行環境，"dev" 或 "prod"（預設 "prod"）。
+	// 切換環境僅影響「收件人為空時的預設填入清單」，不自動改寫已設定的收件人。
+	Environment string    `json:"environment,omitempty"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // FilecheckSettings 設定目錄檔案存在性排程掃描功能。
@@ -163,13 +194,20 @@ func ValidateAndFillDefaults(s Settings) (Settings, error) {
 		s.HeartbeatInterval = DefaultHeartbeatInterval
 	}
 
-	mail, err := validateAndFillMailDefaults(s.Mail)
+	// 正規化環境識別字串，空值預設為 prod
+	env := strings.ToLower(strings.TrimSpace(s.Environment))
+	if env != EnvDev && env != EnvProd {
+		env = EnvProd
+	}
+	s.Environment = env
+
+	mail, err := validateAndFillMailDefaults(s.Mail, env)
 	if err != nil {
 		return s, err
 	}
 	s.Mail = mail
 
-	filecheck, err := validateAndFillFilecheckDefaults(s.Filecheck)
+	filecheck, err := validateAndFillFilecheckDefaults(s.Filecheck, env)
 	if err != nil {
 		return s, err
 	}
@@ -178,7 +216,7 @@ func ValidateAndFillDefaults(s Settings) (Settings, error) {
 	return s, nil
 }
 
-func validateAndFillFilecheckDefaults(fc FilecheckSettings) (FilecheckSettings, error) {
+func validateAndFillFilecheckDefaults(fc FilecheckSettings, env string) (FilecheckSettings, error) {
 	// Mail 排程預設
 	trimSched := strings.TrimSpace(fc.Mail.Schedule)
 	if trimSched == "" {
@@ -196,9 +234,9 @@ func validateAndFillFilecheckDefaults(fc FilecheckSettings) (FilecheckSettings, 
 	// 清除格式不合法的收件人（如 ADDR[...] 或其他無 @ 的字串）
 	fc.Mail.To = filterValidEmails(fc.Mail.To)
 
-	// 若清單為空，填入預設收件人
+	// 若清單為空，依環境填入預設收件人
 	if len(fc.Mail.To) == 0 {
-		fc.Mail.To = append([]string(nil), DefaultMailToList...)
+		fc.Mail.To = DefaultMailToListForEnv(env)
 	}
 
 	return fc, nil
@@ -225,7 +263,7 @@ func configPath() (string, error) {
 	return filepath.Join(dir, "config.json"), nil
 }
 
-func validateAndFillMailDefaults(m MailSettings) (MailSettings, error) {
+func validateAndFillMailDefaults(m MailSettings, env string) (MailSettings, error) {
 	trimmedSchedule := strings.TrimSpace(m.Schedule)
 	if trimmedSchedule == "" {
 		trimmedSchedule = DefaultMailSchedule
@@ -242,7 +280,7 @@ func validateAndFillMailDefaults(m MailSettings) (MailSettings, error) {
 	m.Timezone = trimmedTZ
 
 	if len(m.To) == 0 {
-		m.To = append([]string(nil), DefaultMailToList...)
+		m.To = DefaultMailToListForEnv(env)
 	} else {
 		m.To = normalizeList(m.To)
 	}

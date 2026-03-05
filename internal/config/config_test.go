@@ -355,7 +355,7 @@ func TestFilecheckDefaults_InvalidToAddresses_AreFiltered(t *testing.T) {
 			To: []string{"ADDR[r021@httc.com.tw]", "r021@httc.com.tw"},
 		},
 	}
-	result, err := validateAndFillFilecheckDefaults(fc)
+	result, err := validateAndFillFilecheckDefaults(fc, EnvProd)
 	if err != nil {
 		t.Fatalf("不應回傳錯誤，got %v", err)
 	}
@@ -370,7 +370,7 @@ func TestFilecheckDefaults_AllInvalidTo_FallsBackToDefaultList(t *testing.T) {
 			To: []string{"ADDR[bad]", "notvalid"},
 		},
 	}
-	result, err := validateAndFillFilecheckDefaults(fc)
+	result, err := validateAndFillFilecheckDefaults(fc, EnvProd)
 	if err != nil {
 		t.Fatalf("不應回傳錯誤，got %v", err)
 	}
@@ -386,7 +386,7 @@ func TestFilecheckDefaults_AllInvalidTo_FallsBackToDefaultList(t *testing.T) {
 // TestFilecheckDefaultTo_EmptyUsesDefaultList 確認 filecheck.mail.to 空時自動填入 DefaultMailToList。
 func TestFilecheckDefaultTo_EmptyUsesDefaultList(t *testing.T) {
 	fc := FilecheckSettings{}
-	result, err := validateAndFillFilecheckDefaults(fc)
+	result, err := validateAndFillFilecheckDefaults(fc, EnvProd)
 	if err != nil {
 		t.Fatalf("不應回傳錯誤，got %v", err)
 	}
@@ -397,5 +397,98 @@ func TestFilecheckDefaultTo_EmptyUsesDefaultList(t *testing.T) {
 		if result.Mail.To[i] != want {
 			t.Errorf("預期 To[%d]=%q，實際=%q", i, want, result.Mail.To[i])
 		}
+	}
+}
+
+// ── Environment 環境相關測試 ─────────────────────────────────────────────
+
+func TestDefaultMailToListForEnv_DevReturnsDev(t *testing.T) {
+	list := DefaultMailToListForEnv(EnvDev)
+	if len(list) != len(DefaultMailToListDev) {
+		t.Fatalf("預期 dev 清單 %d 位，實際 %d 位", len(DefaultMailToListDev), len(list))
+	}
+	for i, want := range DefaultMailToListDev {
+		if list[i] != want {
+			t.Errorf("dev[%d] 預期 %q 實際 %q", i, want, list[i])
+		}
+	}
+}
+
+func TestDefaultMailToListForEnv_ProdReturnsProd(t *testing.T) {
+	list := DefaultMailToListForEnv(EnvProd)
+	if len(list) != len(DefaultMailToListProd) {
+		t.Fatalf("預期 prod 清單 %d 位，實際 %d 位", len(DefaultMailToListProd), len(list))
+	}
+	if list[0] != "589497@cpc.com.tw" {
+		t.Errorf("prod 清單首位應為 589497@cpc.com.tw，實際 %q", list[0])
+	}
+}
+
+func TestDefaultMailToListForEnv_EmptyDefaultsToProd(t *testing.T) {
+	list := DefaultMailToListForEnv("")
+	if len(list) != len(DefaultMailToListProd) {
+		t.Fatalf("空字串應回傳 prod 清單，實際 %d 位", len(list))
+	}
+}
+
+func TestDefaultMailToListForEnv_UnknownDefaultsToProd(t *testing.T) {
+	list := DefaultMailToListForEnv("staging")
+	if len(list) != len(DefaultMailToListProd) {
+		t.Fatalf("不明環境應回傳 prod 清單，實際 %d 位", len(list))
+	}
+}
+
+func TestValidateAndFillDefaults_DevEnv_UsesDevList(t *testing.T) {
+	s, err := ValidateAndFillDefaults(Settings{RootDir: "./foo", Environment: EnvDev})
+	if err != nil {
+		t.Fatalf("不應錯誤：%v", err)
+	}
+	if s.Environment != EnvDev {
+		t.Errorf("環境應為 dev，實際 %q", s.Environment)
+	}
+	// mail.To 為空時應填入 dev 清單
+	if len(s.Mail.To) != len(DefaultMailToListDev) {
+		t.Fatalf("dev 環境 mail.To 預期 %d 位，實際 %d：%v",
+			len(DefaultMailToListDev), len(s.Mail.To), s.Mail.To)
+	}
+	// dev 清單不包含 589497@cpc.com.tw
+	for _, addr := range s.Mail.To {
+		if addr == "589497@cpc.com.tw" {
+			t.Errorf("dev 環境不應含 589497@cpc.com.tw，實際 %v", s.Mail.To)
+		}
+	}
+}
+
+func TestValidateAndFillDefaults_ProdEnv_UsesProdList(t *testing.T) {
+	s, err := ValidateAndFillDefaults(Settings{RootDir: "./foo", Environment: EnvProd})
+	if err != nil {
+		t.Fatalf("不應錯誤：%v", err)
+	}
+	if s.Environment != EnvProd {
+		t.Errorf("環境應為 prod，實際 %q", s.Environment)
+	}
+	if len(s.Mail.To) != len(DefaultMailToListProd) {
+		t.Fatalf("prod 環境 mail.To 預期 %d 位，實際 %d：%v",
+			len(DefaultMailToListProd), len(s.Mail.To), s.Mail.To)
+	}
+	// prod 清單包含 589497@cpc.com.tw
+	found := false
+	for _, addr := range s.Mail.To {
+		if addr == "589497@cpc.com.tw" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("prod 環境應含 589497@cpc.com.tw，實際 %v", s.Mail.To)
+	}
+}
+
+func TestValidateAndFillDefaults_EmptyEnv_DefaultsToProd(t *testing.T) {
+	s, err := ValidateAndFillDefaults(Settings{RootDir: "./foo"})
+	if err != nil {
+		t.Fatalf("不應錯誤：%v", err)
+	}
+	if s.Environment != EnvProd {
+		t.Errorf("環境空時應預設 prod，實際 %q", s.Environment)
 	}
 }
