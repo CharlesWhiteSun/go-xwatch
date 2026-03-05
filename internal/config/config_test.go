@@ -212,18 +212,20 @@ func TestMailEnabledExplicitTrue(t *testing.T) {
 }
 
 // TestMailDefaultTo 確認從未設定收件人時，
-// ValidateAndFillDefaults 自動填入 DefaultMailTo。
+// ValidateAndFillDefaults 自動填入 DefaultMailToList 全部地址。
 func TestMailDefaultTo(t *testing.T) {
 	root := "./foo"
 	s, err := ValidateAndFillDefaults(Settings{RootDir: root})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if len(s.Mail.To) == 0 {
-		t.Fatal("預期 To 自動填入 DefaultMailTo，實際為空")
+	if len(s.Mail.To) != len(DefaultMailToList) {
+		t.Fatalf("預期 To 共 %d 位，實際得 %d位：%v", len(DefaultMailToList), len(s.Mail.To), s.Mail.To)
 	}
-	if s.Mail.To[0] != DefaultMailTo {
-		t.Fatalf("預期 To[0]=%q，實際=%q", DefaultMailTo, s.Mail.To[0])
+	for i, want := range DefaultMailToList {
+		if s.Mail.To[i] != want {
+			t.Errorf("預期 To[%d]=%q，實際=%q", i, want, s.Mail.To[i])
+		}
 	}
 }
 
@@ -362,7 +364,7 @@ func TestFilecheckDefaults_InvalidToAddresses_AreFiltered(t *testing.T) {
 	}
 }
 
-func TestFilecheckDefaults_AllInvalidTo_ResultsInEmpty(t *testing.T) {
+func TestFilecheckDefaults_AllInvalidTo_FallsBackToDefaultList(t *testing.T) {
 	fc := FilecheckSettings{
 		Mail: FilecheckMailSettings{
 			To: []string{"ADDR[bad]", "notvalid"},
@@ -372,7 +374,28 @@ func TestFilecheckDefaults_AllInvalidTo_ResultsInEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("不應回傳錯誤，got %v", err)
 	}
-	if len(result.Mail.To) != 0 {
-		t.Errorf("全部無效時應為空清單，got %v", result.Mail.To)
+	// 全部無效們過濾後為空，應自動填入 DefaultMailToList
+	if len(result.Mail.To) != len(DefaultMailToList) {
+		t.Errorf("公全無效時應回彈至 DefaultMailToList（%d 位），got %v", len(DefaultMailToList), result.Mail.To)
+	}
+	if len(result.Mail.To) > 0 && result.Mail.To[0] != DefaultMailToList[0] {
+		t.Errorf("應回彈首位=%q，got %q", DefaultMailToList[0], result.Mail.To[0])
+	}
+}
+
+// TestFilecheckDefaultTo_EmptyUsesDefaultList 確認 filecheck.mail.to 空時自動填入 DefaultMailToList。
+func TestFilecheckDefaultTo_EmptyUsesDefaultList(t *testing.T) {
+	fc := FilecheckSettings{}
+	result, err := validateAndFillFilecheckDefaults(fc)
+	if err != nil {
+		t.Fatalf("不應回傳錯誤，got %v", err)
+	}
+	if len(result.Mail.To) != len(DefaultMailToList) {
+		t.Fatalf("預期 To 共 %d 位，實際得 %d 位：%v", len(DefaultMailToList), len(result.Mail.To), result.Mail.To)
+	}
+	for i, want := range DefaultMailToList {
+		if result.Mail.To[i] != want {
+			t.Errorf("預期 To[%d]=%q，實際=%q", i, want, result.Mail.To[i])
+		}
 	}
 }

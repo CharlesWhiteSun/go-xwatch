@@ -375,7 +375,7 @@ func applyFlags(mail *config.MailSettings, args []string) error {
 }
 
 func printMailUsage() {
-	fmt.Println("mail 指令用法：（管理 watch log 郵件寄送；filecheck 報告請使用 filecheck mail）")
+	fmt.Println("mail 指令用法：（郵件排程管理；filecheck 報告請使用 filecheck mail）")
 	fmt.Println("  mail help")
 	fmt.Println("  mail status")
 	fmt.Println("  mail enable [flags]")

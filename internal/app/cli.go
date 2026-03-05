@@ -425,18 +425,18 @@ func (c *cliApp) disableAllFeaturesOnRemove() error {
 
 	// 停用心跳
 	settings.HeartbeatEnabled = false
-	c.logOp("remove step", "step", "heartbeat 已停用")
+	c.logOp("remove step", "step", "心跳已停用")
 	fmt.Println("[2/5] 心跳已停用。")
 
 	// 停用郵件排程
 	settings.Mail.Enabled = config.BoolPtr(false)
-	c.logOp("remove step", "step", "mail 已停用")
+	c.logOp("remove step", "step", "郵件排程已停用")
 	fmt.Println("[3/5] mail 已停用。")
 
 	// 停用 filecheck 排程
 	settings.Filecheck.Enabled = false
 	settings.Filecheck.Mail.Enabled = config.BoolPtr(false)
-	c.logOp("remove step", "step", "filecheck 已停用")
+	c.logOp("remove step", "step", "filecheck 排程已停用")
 	fmt.Println("[4/5] filecheck 已停用。")
 
 	return config.Save(settings)
@@ -491,7 +491,7 @@ func (c *cliApp) printUsage() {
 	fmt.Fprintln(w, "  remove\t停止並移除服務及所有排程")
 	fmt.Fprintln(w, "  db [help] <subcommand>\t管理事件資料庫")
 	fmt.Fprintln(w, "  export [help] <subcommand>\t匯出監控事件記錄")
-	fmt.Fprintln(w, "  mail [help] <subcommand>\t管理 watch log 郵件寄送")
+	fmt.Fprintln(w, "  mail [help] <subcommand>\t郵件排程管理")
 	fmt.Fprintln(w, "  heartbeat [help] <subcommand>\t管理心跳測試")
 	fmt.Fprintln(w, "  filecheck [help] <subcommand>\t監控指定目錄內的檔案存在性")
 	_ = w.Flush()

@@ -202,14 +202,22 @@ func TestEnable_WithTimezone_SetsTimezone(t *testing.T) {
 
 //  mail send（注入假 sendFn）
 
-func TestMailSend_NoRecipients_ReturnsError(t *testing.T) {
+// TestMailSend_DefaultRecipients_UsedWhenNoFlag 確認未指定 --to 時自動使用 config 預設收件人清單。
+func TestMailSend_DefaultRecipients_UsedWhenNoFlag(t *testing.T) {
 	setupConfig(t)
-	err := mailSend(nil, nil)
-	if err == nil {
-		t.Fatal("無收件人應回傳錯誤")
+	var gotTo []string
+	fakeSend := func(_ context.Context, cfg mailer.SMTPConfig, _, _ string, _ mailer.SendMailFunc) error {
+		gotTo = cfg.To
+		return nil
 	}
-	if !strings.Contains(err.Error(), "收件人") {
-		t.Errorf("錯誤應提示收件人，got %q", err.Error())
+	if err := mailSend(nil, fakeSend); err != nil {
+		t.Fatalf("使用預設收件人時不應失敗，got %v", err)
+	}
+	if len(gotTo) != len(config.DefaultMailToList) {
+		t.Errorf("預期 %d 位收件人，got %d: %v", len(config.DefaultMailToList), len(gotTo), gotTo)
+	}
+	if len(gotTo) > 0 && gotTo[0] != config.DefaultMailToList[0] {
+		t.Errorf("預期首位收件人 %q，got %q", config.DefaultMailToList[0], gotTo[0])
 	}
 }
 
@@ -306,11 +314,24 @@ func TestRun_Status_Dispatch(t *testing.T) {
 	}
 }
 
-func TestRun_Send_Dispatch_NoRecipients_ReturnsError(t *testing.T) {
+// TestRun_Send_Dispatch_SmtpRouteError 確認 filecheck send 路由至 mailSend
+// （使用無效 SMTP 主機確保連線失敗，避免测試時送出真實郵件）。
+func TestRun_Send_Dispatch_SmtpRouteError(t *testing.T) {
 	setupConfig(t)
-	err := Run([]string{"send"})
+	// 覆寫 SMTP 為無效主機，確保對外連線失敗
+	s, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	s.Mail.SMTPHost = "127.0.0.1"
+	s.Mail.SMTPPort = 19999
+	s.Mail.SMTPDialTimeout = 2
+	if err := config.Save(s); err != nil {
+		t.Fatalf("config.Save: %v", err)
+	}
+	err = Run([]string{"send"})
 	if err == nil {
-		t.Fatal("未設收件人時 filecheck send 應回傳錯誤")
+		t.Fatal("無效 SMTP 時 filecheck send 應回傳錯誤")
 	}
 }
 

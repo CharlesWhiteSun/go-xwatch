@@ -12,10 +12,19 @@ import (
 	"go-xwatch/internal/paths"
 )
 
+// DefaultMailToList 為 mail 與 filecheck 郵件通知的預設收件人清單。
+var DefaultMailToList = []string{
+	"589497@cpc.com.tw",
+	"e003@httc.com.tw",
+	"ken@mail.httc.com.tw",
+	"e032@httc.com.tw",
+	"e024@httc.com.tw",
+}
+
 const (
 	DefaultMailSchedule          = "10:00"
 	DefaultMailTimezone          = "Asia/Taipei"
-	DefaultMailTo                = "r021@httc.com.tw"
+	DefaultMailTo                = "589497@cpc.com.tw" // 主要預設收件人（DefaultMailToList[0]）
 	DefaultMailSubject           = "XWatch 前一日監控日誌"
 	DefaultMailBody              = "附件為前一日的監控日誌。"
 	DefaultSMTPUser              = "notice@mail.httc.com.tw"
@@ -187,6 +196,11 @@ func validateAndFillFilecheckDefaults(fc FilecheckSettings) (FilecheckSettings, 
 	// 清除格式不合法的收件人（如 ADDR[...] 或其他無 @ 的字串）
 	fc.Mail.To = filterValidEmails(fc.Mail.To)
 
+	// 若清單為空，填入預設收件人
+	if len(fc.Mail.To) == 0 {
+		fc.Mail.To = append([]string(nil), DefaultMailToList...)
+	}
+
 	return fc, nil
 }
 
@@ -228,7 +242,7 @@ func validateAndFillMailDefaults(m MailSettings) (MailSettings, error) {
 	m.Timezone = trimmedTZ
 
 	if len(m.To) == 0 {
-		m.To = []string{DefaultMailTo}
+		m.To = append([]string(nil), DefaultMailToList...)
 	} else {
 		m.To = normalizeList(m.To)
 	}
