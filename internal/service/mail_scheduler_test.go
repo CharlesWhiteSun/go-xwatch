@@ -438,6 +438,9 @@ func TestServiceBuildMailContent_LogMissing_Immediate(t *testing.T) {
 	if !strings.Contains(subject, sendModeImmediate) {
 		t.Errorf("主旨應含模式標籤 %q，實際：%q", sendModeImmediate, subject)
 	}
+	if !strings.HasPrefix(subject, "XWatch ") {
+		t.Errorf("主旨應以 \"XWatch \" 開頭，實際：%q", subject)
+	}
 	if !strings.Contains(body, "特此通知") {
 		t.Errorf("內文應含「特此通知」，實際：%q", body)
 	}
@@ -457,6 +460,9 @@ func TestServiceBuildMailContent_LogMissing_Scheduled(t *testing.T) {
 	}
 	if !strings.Contains(subject, sendModeScheduled) {
 		t.Errorf("主旨應含模式標籤 %q，實際：%q", sendModeScheduled, subject)
+	}
+	if !strings.HasPrefix(subject, "XWatch ") {
+		t.Errorf("主旨應以 \"XWatch \" 開頭，實際：%q", subject)
 	}
 	if !strings.Contains(body, "特此通知") {
 		t.Errorf("內文應含「特此通知」，實際：%q", body)
@@ -494,6 +500,9 @@ func TestServiceBuildMailContent_LogExists_Immediate_NoColon(t *testing.T) {
 	if !strings.Contains(subject, "已撈出資料") {
 		t.Errorf("主旨應含「已撈出資料」，實際：%q", subject)
 	}
+	if !strings.HasPrefix(subject, "XWatch ") {
+		t.Errorf("主旨應以 \"XWatch \" 開頭，實際：%q", subject)
+	}
 	if !strings.Contains(body, "壓縮檔") {
 		t.Errorf("內文應含「壓縮檔」，實際：%q", body)
 	}
@@ -516,6 +525,9 @@ func TestServiceBuildMailContent_LogExists_Scheduled_HasColon(t *testing.T) {
 	}
 	if !strings.Contains(subject, "已撈出資料") {
 		t.Errorf("主旨應含「已撈出資料」，實際：%q", subject)
+	}
+	if !strings.HasPrefix(subject, "XWatch ") {
+		t.Errorf("主旨應以 \"XWatch \" 開頭，實際：%q", subject)
 	}
 	if !strings.Contains(body, "壓縮檔") {
 		t.Errorf("內文應含「壓縮檔」，實際：%q", body)

@@ -268,7 +268,7 @@ func TestMailSend_BodyContainsFoundWhenFileMatchesPattern(t *testing.T) {
 	setupConfig(t)
 	s, _ := config.Load()
 
-	// 在預設 scanDir（storage/logs）建立含昨天 YYYY-DD-MM 格式的檔案
+	// 在預設 scanDir（storage/logs）建立含昨天 YYYY-MM-DD 格式的檔案
 	yesterday := time.Now().AddDate(0, 0, -1)
 	datePattern := yesterday.Format(filecheck.FileDateFormat)
 	scanDir := filecheck.DefaultScanDir(s.RootDir)

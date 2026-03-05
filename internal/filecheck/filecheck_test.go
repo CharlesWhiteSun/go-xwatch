@@ -13,10 +13,10 @@ var fixedDate = time.Date(2026, 3, 4, 0, 0, 0, 0, time.UTC)
 
 //  FileDateFormat
 
-func TestFileDateFormat_IsYYYYDDMM(t *testing.T) {
-	// 2026-03-04 格式化後應為 2026-04-03（YYYY-DD-MM）
+func TestFileDateFormat_IsYYYYMMDD(t *testing.T) {
+	// 2026-03-04 格式化後應為 2026-03-04（YYYY-MM-DD）
 	got := fixedDate.Format(FileDateFormat)
-	want := "2026-04-03"
+	want := "2026-03-04"
 	if got != want {
 		t.Errorf("FileDateFormat = %q, want %q", got, want)
 	}
@@ -97,16 +97,16 @@ func TestScanForDate_NoMatchingFiles(t *testing.T) {
 	}
 }
 
-func TestScanForDate_MatchesDateInYYYYDDMM(t *testing.T) {
+func TestScanForDate_MatchesDateInYYYYMMDD(t *testing.T) {
 	tmp := t.TempDir()
-	// fixedDate = 2026-03-04，格式化為 YYYY-DD-MM = "2026-04-03"
-	dateStr := fixedDate.Format(FileDateFormat) // "2026-04-03"
+	// fixedDate = 2026-03-04，格式化為 YYYY-MM-DD = "2026-03-04"
+	dateStr := fixedDate.Format(FileDateFormat) // "2026-03-04"
 
-	// 建立一個含有 YYYY-DD-MM 格式日期的檔案
+	// 建立一個含有 YYYY-MM-DD 格式日期的檔案
 	matchFile := "report_" + dateStr + ".csv"
 	_ = os.WriteFile(filepath.Join(tmp, matchFile), []byte("data"), 0o644)
-	// 不應被比對到的檔案
-	_ = os.WriteFile(filepath.Join(tmp, "report_2026-03-04.csv"), []byte("x"), 0o644)
+	// 不應被比對到的檔案（舊 YYYY-DD-MM 誤誤格式）
+	_ = os.WriteFile(filepath.Join(tmp, "report_2026-04-03.csv"), []byte("x"), 0o644)
 	_ = os.WriteFile(filepath.Join(tmp, "other.log"), []byte("x"), 0o644)
 
 	files, err := ScanForDate(tmp, fixedDate)
@@ -180,7 +180,7 @@ func TestBuildMailReport_Found(t *testing.T) {
 	if !strings.Contains(body, "report_2026-04-03.csv") {
 		t.Errorf("內文應含搜尋到的檔案名稱，got:\n%s", body)
 	}
-	// 搜尋格式應含 YYYY-DD-MM 格式的日期字串
+	// 搜尋格式應含 YYYY-MM-DD 格式的日期字串
 	datePattern := reportDate.Format(FileDateFormat)
 	if !strings.Contains(body, datePattern) {
 		t.Errorf("內文應含搜尋日期格式 %q，got:\n%s", datePattern, body)

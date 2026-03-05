@@ -168,7 +168,7 @@ func sendFilecheckMail(ctx context.Context, logger *slog.Logger, s config.Settin
 	targetDay := now.In(loc).AddDate(0, 0, -1)
 	dayStr := targetDay.Format("2006-01-02")
 
-	// 主動掃描前一日符合 YYYY-DD-MM 格式的檔案（確保時間到必寄，有無皆送）
+	// 主動掃描前一日符合 YYYY-MM-DD 格式的檔案（確保時間到必寄，有無均送）
 	scanDir := filecheck.ResolveScanDir(s.RootDir, fc.ScanDir)
 	files, scanErr := filecheck.ScanForDate(scanDir, targetDay)
 	subject, body := filecheck.BuildMailReport(scanDir, files, targetDay, scanErr)

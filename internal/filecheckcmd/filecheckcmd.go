@@ -1,5 +1,5 @@
 ﻿// Package filecheckcmd 實作 filecheck CLI 子指令。
-// filecheck 在每日排程時間掃描指定目錄，確認是否存在包含前一日日期（YYYY-DD-MM）的檔案，
+// filecheck 在每日排程時間掃描指定目錄，確認是否存在包含前一日日期（YYYY-MM-DD）的檔案，
 // 無論有無皆寄送郵件通知指定人員。
 package filecheckcmd
 
@@ -65,8 +65,8 @@ func mailStatus() error {
 	fmt.Println("收件人：", strings.Join(m.To, ", "))
 	fmt.Println()
 	fmt.Println("（SMTP 設定繼承自 mail 指令設定）")
-	fmt.Printf("  SMTP 主機：%s:%d\n", settings.Mail.SMTPHost, settings.Mail.SMTPPort)
-	fmt.Println("  SMTP 使用者：", settings.Mail.SMTPUser)
+	fmt.Printf("  SMTP Host:Port: %s:%d\n", settings.Mail.SMTPHost, settings.Mail.SMTPPort)
+	fmt.Println("  SMTP Account: ", settings.Mail.SMTPUser)
 	return nil
 }
 
@@ -187,7 +187,7 @@ func looksLikeEmail(s string) bool {
 	return at > 0 && at < len(s)-1 && !strings.ContainsAny(s, " []()<>")
 }
 
-// mailSend 主動掃描前一日符合 YYYY-DD-MM 格式的檔案，並立即寄送結果報告。
+// mailSend 主動掃描前一日符合 YYYY-MM-DD 格式的檔案，並立即寄送結果報告。
 // 無論有無符合檔案，皆會寄送；sendFn 供測試注入，nil 時使用 mailer.SendTextMail。
 func mailSend(args []string, sendFn func(ctx context.Context, cfg mailer.SMTPConfig, subject, body string, fn mailer.SendMailFunc) error) error {
 	if sendFn == nil {
@@ -231,7 +231,7 @@ func mailSend(args []string, sendFn func(ctx context.Context, cfg mailer.SMTPCon
 		return errors.New("未設定收件人，請先執行 'filecheck mail enable --to <email>' 或使用 --to 指定")
 	}
 
-	// 掃描前一日符合 YYYY-DD-MM 格式的檔案（有無皆寄）
+	// 掃描前一日符合 YYYY-MM-DD 格式的檔案（有無均寄）
 	scanDir := filecheck.ResolveScanDir(settings.RootDir, settings.Filecheck.ScanDir)
 	files, scanErr := filecheck.ScanForDate(scanDir, targetDay)
 	subject, body := filecheck.BuildMailReport(scanDir, files, targetDay, scanErr)
@@ -270,7 +270,7 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("說明：")
 	fmt.Println("  在每日指定時間（預設 10:00）掃描目錄，確認是否存在包含前一日日期")
-	fmt.Println("  （YYYY-DD-MM 格式）的檔案，無論找到或未找到皆以郵件通知指定人員。")
+	fmt.Println("  （YYYY-MM-DD 格式）的檔案，無論找到或未找到皆以郵件通知指定人員。")
 	fmt.Println("  SMTP 連線設定繼承自 'mail' 指令的 SMTP 組態（共用 SMTP 伺服器）。")
 	fmt.Println("  此郵件通知功能獨立於監控 watch log 的 mail 指令。")
 	fmt.Println()
@@ -322,7 +322,7 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("與 mail 指令的差異：")
 	fmt.Println("  mail send       寄送 xwatch-watch-logs（檔案系統監控日誌，含 zip 附件）")
-	fmt.Println("  filecheck send  寄送目錄檔案存在性結果（YYYY-DD-MM 格式比對，純文字）")
+	fmt.Println("  filecheck send  寄送目錄檔案存在性結果（YYYY-MM-DD 格式比對，純文字）")
 }
 
 //  工具函式
