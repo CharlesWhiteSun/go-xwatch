@@ -30,15 +30,15 @@ func buildMailContent(rootDirName, dayStr, logPath, mode string) (subject, body 
 	logMissing := err != nil || info.Size() == 0
 
 	if logMissing {
-		subject = fmt.Sprintf("%s 資料夾監控日誌%s: %s 無資料夾異動紀錄", rootDirName, mode, dayStr)
+		subject = fmt.Sprintf("XWatch %s 資料夾監控日誌%s: %s 無資料夾異動紀錄", rootDirName, mode, dayStr)
 		body = fmt.Sprintf("您好，%s %s 無資料夾異動之紀錄，特此通知。", rootDirName, dayStr)
 		return subject, body, true
 	}
 	// 有日誌：即時模式以空格連接，排程模式以冒號連接
 	if mode == sendModeImmediate {
-		subject = fmt.Sprintf("%s 資料夾監控日誌%s %s 已撈出資料，詳如內文", rootDirName, mode, dayStr)
+		subject = fmt.Sprintf("XWatch %s 資料夾監控日誌%s %s 已撈出資料，詳如內文", rootDirName, mode, dayStr)
 	} else {
-		subject = fmt.Sprintf("%s 資料夾監控日誌%s: %s 已撈出資料，詳如內文", rootDirName, mode, dayStr)
+		subject = fmt.Sprintf("XWatch %s 資料夾監控日誌%s: %s 已撈出資料，詳如內文", rootDirName, mode, dayStr)
 	}
 	body = fmt.Sprintf("您好，附件為 %s %s 之資料夾監控日誌壓縮檔，請卓參。", rootDirName, dayStr)
 	return subject, body, false
@@ -90,8 +90,8 @@ func status() error {
 	fmt.Println("收件人:", strings.Join(mail.To, ", "))
 	fmt.Println("主旨:", mail.Subject)
 	fmt.Println("內容:", mail.Body)
-	fmt.Println("SMTP:", fmt.Sprintf("%s:%d", mail.SMTPHost, mail.SMTPPort))
-	fmt.Println("SMTP 使用者:", mail.SMTPUser)
+	fmt.Println("SMTP Host:Port:", fmt.Sprintf("%s:%d", mail.SMTPHost, mail.SMTPPort))
+	fmt.Println("SMTP Account:", mail.SMTPUser)
 	fmt.Println("watch log 目錄:", mail.LogDir)
 	fmt.Println("mail log 目錄:", mail.MailLogDir)
 	return nil
