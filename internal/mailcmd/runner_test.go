@@ -1,12 +1,14 @@
 package mailcmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"go-xwatch/internal/config"
+	"go-xwatch/internal/mailer"
 )
 
 // ── Runner 介面配適測試 ───────────────────────────────────────────────
@@ -82,5 +84,37 @@ func TestRunner_Run_UnknownSubcmd(t *testing.T) {
 	err := Runner.Run([]string{"nonexistent-cmd-xyz"})
 	if err == nil {
 		t.Error("對未知子指令應回傳錯誤，但得到 nil")
+	}
+}
+
+// TestRunner_SendSubcmd_CallsInjectedSender 確認 Runner.Run("send") 使用注入的 GmailSender（ISP 驗證）。
+// 這選話看出了 ISP 動機：縖譯期就能測試、不需起真實 SMTP。
+func TestRunner_SendSubcmd_CallsInjectedSender(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	if err := config.Save(config.Settings{
+		RootDir: filepath.Join(tmp, "root"),
+		Mail: config.MailSettings{
+			To:              []string{"test@example.com"},
+			SMTPDialTimeout: 5,
+		},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	var called bool
+	r := mailCmdRunner{sender: &mockGmailSender{fn: func(
+		_ context.Context, _ mailer.SMTPConfig, _ mailer.ReportOptions, _ mailer.SendMailFunc,
+	) error {
+		called = true
+		return nil
+	}}}
+
+	if err := r.Run([]string{"send", "--to", "test@example.com"}); err != nil {
+		t.Fatalf("r.Run send 不應回傳錯誤，got %v", err)
+	}
+	if !called {
+		t.Error("runner.Run 應使用注入的 GmailSender，但 mock 未被呼叫")
 	}
 }

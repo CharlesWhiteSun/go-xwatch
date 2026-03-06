@@ -21,35 +21,10 @@ const (
 	sendModeScheduled = "(排程)"
 )
 
-// Run handles mail subcommands.
+// Run 展開 mail 子指令，委派至 Runner.Run（背後相容包裝）。
+// 指令派發、俩款 sender 喊入成够均由 mailCmdRunner.Run 負責。
 func Run(args []string) error {
-	if len(args) == 0 {
-		printMailUsage()
-		return nil
-	}
-
-	sub := strings.ToLower(args[0])
-	args = args[1:]
-
-	switch sub {
-	case "help":
-		printMailHelp(time.Now())
-		return nil
-	case "status":
-		return status()
-	case "enable":
-		return enable(args)
-	case "disable":
-		return disable()
-	case "set":
-		return set(args)
-	case "add-to":
-		return addTo(args)
-	case "send":
-		return send(args)
-	default:
-		return fmt.Errorf("未知子指令: %s", sub)
-	}
+	return Runner.Run(args)
 }
 
 func status() error {
@@ -158,14 +133,12 @@ func addTo(args []string) error {
 	return nil
 }
 
-func send(args []string) error {
-	return sendWithGmailFn(args, nil)
-}
-
-// sendWithGmailFn 是 send 的可測試版本，允許注入 SendGmail 函式（nil 時使用 mailer.SendGmail）。
-func sendWithGmailFn(args []string, gmailFn func(ctx context.Context, cfg mailer.SMTPConfig, opts mailer.ReportOptions, sendFn mailer.SendMailFunc) error) error {
-	if gmailFn == nil {
-		gmailFn = mailer.SendGmail
+// sendWithSender 是 send 的可測試版本，以 GmailSender 介面取代函式型注入（ISP）。
+// sender 為 nil 時自動使用 realGmailSender（委派 mailer.SendGmail）。
+// 測試可傳入實作 GmailSender 的 mock struct，無需再傳逞 function literal。
+func sendWithSender(args []string, sender GmailSender) error {
+	if sender == nil {
+		sender = realGmailSender{}
 	}
 
 	settings, err := config.Load()
@@ -281,7 +254,7 @@ func sendWithGmailFn(args []string, gmailFn func(ctx context.Context, cfg mailer
 		attachmentStatus = "missing"
 	}
 
-	if err := gmailFn(context.Background(), cfg, opts, nil); err != nil {
+	if err := sender.SendGmail(context.Background(), cfg, opts, nil); err != nil {
 		// 寄信失敗時記錄真實附件狀況，錯誤原因由「錯誤=」欄位描述
 		_ = mailutil.WriteMailLog(mailLogDir, time.Now(), "fail", dayStr, recipients, subject, attachmentStatus, err.Error())
 		return err

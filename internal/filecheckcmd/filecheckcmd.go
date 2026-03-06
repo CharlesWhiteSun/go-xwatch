@@ -18,34 +18,10 @@ import (
 	"go-xwatch/internal/mailer"
 )
 
-// Run 處理 filecheck 子指令。
-// filecheck 的功能等同於原本的 filecheck mail，直接管理每日目錄掃描郵件通知。
+// Run 展開 filecheck 子指令，委派至 Runner.Run（能後相容包裝）。
+// 指令派發、sender 喊入均由 filecheckCmdRunner.Run 負責。
 func Run(args []string) error {
-	if len(args) == 0 {
-		printUsage()
-		return nil
-	}
-
-	sub := strings.ToLower(args[0])
-	rest := args[1:]
-
-	switch sub {
-	case "help":
-		printHelp()
-		return nil
-	case "status":
-		return mailStatus()
-	case "enable":
-		return mailEnable(rest)
-	case "disable":
-		return mailDisable()
-	case "add-to":
-		return mailAddTo(rest)
-	case "send":
-		return mailSend(rest, nil)
-	default:
-		return fmt.Errorf("filecheck: 未知子指令 %q，請執行 'filecheck help' 查看說明", sub)
-	}
+	return Runner.Run(args)
 }
 
 //  各子指令實作
@@ -187,11 +163,12 @@ func looksLikeEmail(s string) bool {
 	return at > 0 && at < len(s)-1 && !strings.ContainsAny(s, " []()<>")
 }
 
-// mailSend 主動掃描前一日符合 YYYY-MM-DD 格式的檔案，並立即寄送結果報告。
-// 無論有無符合檔案，皆會寄送；sendFn 供測試注入，nil 時使用 mailer.SendTextMail。
-func mailSend(args []string, sendFn func(ctx context.Context, cfg mailer.SMTPConfig, subject, body string, fn mailer.SendMailFunc) error) error {
-	if sendFn == nil {
-		sendFn = mailer.SendTextMail
+// mailSendWithSender 主動掃描前一日符合 YYYY-MM-DD 格式的檔案，並立即寄送結果報告。
+// 無論有無符合檔案，皮會寄送。
+// 以 TextMailSender 介面取代函式型注入（ISP），sender 為 nil 時自動使用 realTextMailSender。
+func mailSendWithSender(args []string, sender TextMailSender) error {
+	if sender == nil {
+		sender = realTextMailSender{}
 	}
 
 	fs := flag.NewFlagSet("filecheck mail send", flag.ContinueOnError)
@@ -248,7 +225,7 @@ func mailSend(args []string, sendFn func(ctx context.Context, cfg mailer.SMTPCon
 		DialTimeout: time.Duration(smtpCfg.SMTPDialTimeout) * time.Second,
 	}
 
-	if err := sendFn(context.Background(), cfg, subject, body, nil); err != nil {
+	if err := sender.SendTextMail(context.Background(), cfg, subject, body, nil); err != nil {
 		return fmt.Errorf("寄送失敗：%w", err)
 	}
 	fmt.Printf("filecheck 報告已寄送至 %s。\n", strings.Join(recipients, ", "))

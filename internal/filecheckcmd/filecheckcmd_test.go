@@ -13,6 +13,23 @@ import (
 	"go-xwatch/internal/mailer"
 )
 
+// mockTextMailSender 是 TextMailSender 介面的測試 mock。
+// fn 欄位不為 nil 時呼叫 fn；否則回傳 err。
+type mockTextMailSender struct {
+	fn  func(ctx context.Context, cfg mailer.SMTPConfig, subject, body string, fn mailer.SendMailFunc) error
+	err error
+}
+
+func (m *mockTextMailSender) SendTextMail(ctx context.Context, cfg mailer.SMTPConfig, subject, body string, fn mailer.SendMailFunc) error {
+	if m.fn != nil {
+		return m.fn(ctx, cfg, subject, body, fn)
+	}
+	return m.err
+}
+
+// 確保 mockTextMailSender 編譯期即符合 TextMailSender 介面。
+var _ TextMailSender = &mockTextMailSender{}
+
 // setupConfig 在暫存目錄建立最小測試設定。
 func setupConfig(t *testing.T) string {
 	t.Helper()
@@ -200,17 +217,17 @@ func TestEnable_WithTimezone_SetsTimezone(t *testing.T) {
 	}
 }
 
-//  mail send（注入假 sendFn）
+//  mail send（注入假 TextMailSender mock）
 
 // TestMailSend_DefaultRecipients_UsedWhenNoFlag 確認未指定 --to 時自動使用 config 預設收件人清單。
 func TestMailSend_DefaultRecipients_UsedWhenNoFlag(t *testing.T) {
 	setupConfig(t)
 	var gotTo []string
-	fakeSend := func(_ context.Context, cfg mailer.SMTPConfig, _, _ string, _ mailer.SendMailFunc) error {
+	mock := &mockTextMailSender{fn: func(_ context.Context, cfg mailer.SMTPConfig, _, _ string, _ mailer.SendMailFunc) error {
 		gotTo = cfg.To
 		return nil
-	}
-	if err := mailSend(nil, fakeSend); err != nil {
+	}}
+	if err := mailSendWithSender(nil, mock); err != nil {
 		t.Fatalf("使用預設收件人時不應失敗，got %v", err)
 	}
 	wantTo := config.DefaultMailToListForEnv(config.EnvDev)
@@ -227,14 +244,14 @@ func TestMailSend_WithFakeSmtp_Succeeds(t *testing.T) {
 	_ = mailEnable([]string{"--to", "test@example.com"})
 
 	var gotSubject, gotBody string
-	fakeSend := func(_ context.Context, _ mailer.SMTPConfig, subject, body string, _ mailer.SendMailFunc) error {
+	mock := &mockTextMailSender{fn: func(_ context.Context, _ mailer.SMTPConfig, subject, body string, _ mailer.SendMailFunc) error {
 		gotSubject = subject
 		gotBody = body
 		return nil
-	}
+	}}
 
-	if err := mailSend([]string{"--to", "test@example.com"}, fakeSend); err != nil {
-		t.Fatalf("mailSend（注入假 smtp）不應回傳錯誤，got %v", err)
+	if err := mailSendWithSender([]string{"--to", "test@example.com"}, mock); err != nil {
+		t.Fatalf("mailSendWithSender（注入假 smtp）不應回傳錯誤，got %v", err)
 	}
 	// 主旨應含「目錄檔案存在性報告」關鍵字
 	if !strings.Contains(gotSubject, "目錄") {
@@ -251,11 +268,11 @@ func TestMailSend_BodyContainsStatus(t *testing.T) {
 	_ = mailEnable([]string{"--to", "test@example.com"})
 
 	var gotBody string
-	fakeSend := func(_ context.Context, _ mailer.SMTPConfig, _, body string, _ mailer.SendMailFunc) error {
+	mock := &mockTextMailSender{fn: func(_ context.Context, _ mailer.SMTPConfig, _, body string, _ mailer.SendMailFunc) error {
 		gotBody = body
 		return nil
-	}
-	_ = mailSend([]string{"--to", "test@example.com"}, fakeSend)
+	}}
+	_ = mailSendWithSender([]string{"--to", "test@example.com"}, mock)
 
 	hasStatus := strings.Contains(gotBody, "[FOUND]") ||
 		strings.Contains(gotBody, "[NOT FOUND]") ||
@@ -281,12 +298,12 @@ func TestMailSend_BodyContainsFoundWhenFileMatchesPattern(t *testing.T) {
 	_ = mailEnable([]string{"--to", "test@example.com"})
 
 	var gotSubject, gotBody string
-	fakeSend := func(_ context.Context, _ mailer.SMTPConfig, subject, body string, _ mailer.SendMailFunc) error {
+	mock := &mockTextMailSender{fn: func(_ context.Context, _ mailer.SMTPConfig, subject, body string, _ mailer.SendMailFunc) error {
 		gotSubject = subject
 		gotBody = body
 		return nil
-	}
-	if err := mailSend([]string{"--to", "test@example.com"}, fakeSend); err != nil {
+	}}
+	if err := mailSendWithSender([]string{"--to", "test@example.com"}, mock); err != nil {
 		t.Fatalf("不應回傳錯誤，got %v", err)
 	}
 	if !strings.Contains(gotSubject, "找到") {
@@ -462,7 +479,7 @@ func TestMailAddTo_WithToFlag(t *testing.T) {
 
 func TestMailSend_InvalidToFlag_ReturnsError(t *testing.T) {
 	setupConfig(t)
-	err := mailSend([]string{"--to", "ADDR[bad@addr]"}, nil)
+	err := mailSendWithSender([]string{"--to", "ADDR[bad@addr]"}, nil)
 	if err == nil {
 		t.Fatal("--to 傳入 ADDR[...] 格式應回傳錯誤")
 	}

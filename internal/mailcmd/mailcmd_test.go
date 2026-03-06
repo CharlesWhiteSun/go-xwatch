@@ -15,6 +15,23 @@ import (
 	"go-xwatch/internal/mailer"
 )
 
+// mockGmailSender 是 GmailSender 介面的測試 mock。
+// fn 欄位不為 nil 時呼叫 fn；否則回傳 err。
+type mockGmailSender struct {
+	fn  func(ctx context.Context, cfg mailer.SMTPConfig, opts mailer.ReportOptions, sendFn mailer.SendMailFunc) error
+	err error
+}
+
+func (m *mockGmailSender) SendGmail(ctx context.Context, cfg mailer.SMTPConfig, opts mailer.ReportOptions, sendFn mailer.SendMailFunc) error {
+	if m.fn != nil {
+		return m.fn(ctx, cfg, opts, sendFn)
+	}
+	return m.err
+}
+
+// 確保 mockGmailSender 編譯期即符合 GmailSender 介面。
+var _ GmailSender = &mockGmailSender{}
+
 func TestRunHelp(t *testing.T) {
 	if err := Run([]string{"help"}); err != nil {
 		t.Fatalf("Run help should not error: %v", err)
@@ -50,9 +67,9 @@ func readLastMailLogLine(t *testing.T, mailLogDir string) string {
 	return lines[len(lines)-1]
 }
 
-// TestSendWithGmailFn_FailLogShowsAttachmentStatus 確認 send() 失敗時：
+// TestSendWithSender_FailLogShowsAttachmentStatus 確認 send() 失敗時：
 // 若 watch log 存在，mail log 的附件欄位顯示「已附檔」而非「失敗」。
-func TestSendWithGmailFn_FailLogShowsAttachmentStatus(t *testing.T) {
+func TestSendWithSender_FailLogShowsAttachmentStatus(t *testing.T) {
 	tmp := t.TempDir()
 
 	mailSettings := config.MailSettings{
@@ -76,12 +93,10 @@ func TestSendWithGmailFn_FailLogShowsAttachmentStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Mock：總是失敗，避免真實 SMTP 連線
-	mockFail := func(_ context.Context, _ mailer.SMTPConfig, _ mailer.ReportOptions, _ mailer.SendMailFunc) error {
-		return errors.New("mock SMTP 連線失敗")
-	}
+	// Mock struct：總是失敗，避免真實 SMTP 連線
+	mock := &mockGmailSender{err: errors.New("mock SMTP 連線失敗")}
 
-	err := sendWithGmailFn([]string{"--to", "test@example.com"}, mockFail)
+	err := sendWithSender([]string{"--to", "test@example.com"}, mock)
 	if err == nil {
 		t.Fatal("預期回傳錯誤，但得到 nil")
 	}
@@ -103,8 +118,8 @@ func TestSendWithGmailFn_FailLogShowsAttachmentStatus(t *testing.T) {
 	}
 }
 
-// TestSendWithGmailFn_DialTimeoutFromConfig 確認 SMTPConfig.DialTimeout 從 config 讀取。
-func TestSendWithGmailFn_DialTimeoutFromConfig(t *testing.T) {
+// TestSendWithSender_DialTimeoutFromConfig 確認 SMTPConfig.DialTimeout 從 config 讀取。
+func TestSendWithSender_DialTimeoutFromConfig(t *testing.T) {
 	tmp := t.TempDir()
 
 	const wantTimeoutSec = 15
@@ -118,12 +133,12 @@ func TestSendWithGmailFn_DialTimeoutFromConfig(t *testing.T) {
 	setupTestMailConfig(t, tmp, mailSettings)
 
 	var capturedTimeout time.Duration
-	mockCapture := func(_ context.Context, cfg mailer.SMTPConfig, _ mailer.ReportOptions, _ mailer.SendMailFunc) error {
+	mock := &mockGmailSender{fn: func(_ context.Context, cfg mailer.SMTPConfig, _ mailer.ReportOptions, _ mailer.SendMailFunc) error {
 		capturedTimeout = cfg.DialTimeout
 		return errors.New("stop after capture")
-	}
+	}}
 
-	_ = sendWithGmailFn([]string{"--to", "test@example.com"}, mockCapture)
+	_ = sendWithSender([]string{"--to", "test@example.com"}, mock)
 
 	want := time.Duration(wantTimeoutSec) * time.Second
 	if capturedTimeout != want {
