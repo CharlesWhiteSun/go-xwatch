@@ -19,6 +19,22 @@ const (
 	EnvProd = "prod"
 )
 
+// ErrNotInitialized 代表設定檔不存在（程式尚未初始化）。
+// 呼叫 config.Load() 時若設定檔不存在，將回傳此錯誤取代原始 os 錯誤，
+// 供各子指令的 status 函式以友善訊息提示使用者。
+var ErrNotInitialized = errors.New("尚未初始化：設定檔不存在，請先執行 init --install-service 完成設定")
+
+// IsInitialized 回傳設定檔是否已存在（即是否已執行過 init）。
+// 可用於顯示狀態前的前置檢查；不存在的情況與 Load() 回傳 ErrNotInitialized 一致。
+func IsInitialized() bool {
+	path, err := configPath()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
+}
+
 // DefaultMailToListDev 為開發環境的預設收件人清單。
 var DefaultMailToListDev = []string{
 	"e003@httc.com.tw",
@@ -165,12 +181,17 @@ func Load() (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
-	bytes, err := os.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// 回傳語意清晰的錯誤，供 status 子指令給予友善提示，
+			// 而非原始「open …: 找不到指定的檔案」訊息。
+			return Settings{}, ErrNotInitialized
+		}
 		return Settings{}, err
 	}
 	var s Settings
-	if err := json.Unmarshal(bytes, &s); err != nil {
+	if err := json.Unmarshal(data, &s); err != nil {
 		return Settings{}, err
 	}
 	return ValidateAndFillDefaults(s)

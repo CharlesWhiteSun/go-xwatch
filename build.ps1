@@ -7,6 +7,13 @@
 #   - 同一根目錄重複安裝時自動偵測並警告
 #   - 重複 init --install-service 時以預設 N 提示使用者確認是否覆蓋
 #   - 偵測 SCM 登錄的執行檔路徑是否與當前執行的一致（改名執行檔防呆）
+#
+# 功能變更記錄（Phase 6 - remove 防呆 + status 未初始化友善提示）：
+#   - config.Load() 在設定檔不存在時回傳 ErrNotInitialized（取代原始 os 錯誤）
+#   - 新增 config.IsInitialized() 供呼叫端判斷是否已初始化
+#   - mail/filecheck/heartbeat status 在未初始化時顯示友善錯誤訊息
+#   - stopAndUninstall 的 config.DeleteConfig 失敗時改為畫面顯示警告
+#   - 確認正常重啟流程（無 remove）設定檔可正確讀取
 
 $ErrorActionPreference = "Stop"
 
@@ -15,7 +22,8 @@ $ver = git describe --tags --always --dirty 2>$null
 if (-not $ver) { $ver = "dev" }
 
 Write-Host "Running tests..."
-go test -count=1 -timeout 120s ./...
+# -p 1 序列化各套件測試，避免 Windows 環境下跨套件並行時的偶發競態問題
+go test -count=1 -timeout 120s -p 1 ./...
 if ($LASTEXITCODE -ne 0) {
 	Write-Error "Tests failed with exit code $LASTEXITCODE"
 	exit $LASTEXITCODE

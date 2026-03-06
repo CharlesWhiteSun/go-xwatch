@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -201,4 +202,91 @@ func TestFilecheckDisableOnRemove_PreviouslyEnabled(t *testing.T) {
 	if after.Filecheck.Mail.IsEnabled() {
 		t.Error("disableAllFeaturesOnRemove 後 Filecheck.Mail.IsEnabled() 應為 false")
 	}
+}
+
+// ── remove 後設定刪除相關整合測試 ────────────────────────────────────────
+
+// TestRemove_DisableThenDeleteConfig_IsInitializedFalse
+// 模擬 stopAndUninstall 的 config 相關兩步：
+// disableAllFeaturesOnRemove() 儲存停用設定，接著 config.DeleteConfig() 刪除檔案；
+// 確認刪除後 config.IsInitialized() = false。
+func TestRemove_DisableThenDeleteConfig_IsInitializedFalse(t *testing.T) {
+	setupRemoveTestConfig(t)
+
+	ml := &mockLogger{}
+	app := &cliApp{opsLogger: ml}
+
+	// 模擬 stopAndUninstall 內的兩步：停用功能 + 刪除設定檔
+	if err := app.disableAllFeaturesOnRemove(); err != nil {
+		t.Fatalf("disableAllFeaturesOnRemove 失敗：%v", err)
+	}
+	if err := config.DeleteConfig(); err != nil {
+		t.Fatalf("DeleteConfig 失敗：%v", err)
+	}
+
+	if config.IsInitialized() {
+		t.Fatal("config.DeleteConfig 後 IsInitialized() 應為 false")
+	}
+}
+
+// TestRemove_DisableThenDeleteConfig_LoadReturnsErrNotInitialized
+// 同上，確認 remove 完成後 config.Load() 回傳 config.ErrNotInitialized，
+// 讓 mail/filecheck/heartbeat status 等子指令顯示友善錯誤，而非原始 os 錯誤。
+func TestRemove_DisableThenDeleteConfig_LoadReturnsErrNotInitialized(t *testing.T) {
+	setupRemoveTestConfig(t)
+
+	ml := &mockLogger{}
+	app := &cliApp{opsLogger: ml}
+
+	if err := app.disableAllFeaturesOnRemove(); err != nil {
+		t.Fatalf("disableAllFeaturesOnRemove 失敗：%v", err)
+	}
+	if err := config.DeleteConfig(); err != nil {
+		t.Fatalf("DeleteConfig 失敗：%v", err)
+	}
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("刪除設定後 Load() 應回傳錯誤")
+	}
+	if !isErrNotInitialized(err) {
+		t.Fatalf("期得 config.ErrNotInitialized，實際：%v", err)
+	}
+}
+
+// TestRemove_FreshExeAfterRemove_StatusCommandShowsNotInitialized
+// 模擬「remove 後在同一資料夾放新 exe 並執行 status 相關子指令」的情境：
+// config 已刪除，Load() 應回傳 ErrNotInitialized（顯示友善錯誤，不顯示舊設定）。
+func TestRemove_FreshExeAfterRemove_StatusCommandShowsNotInitialized(t *testing.T) {
+	setupRemoveTestConfig(t)
+
+	ml := &mockLogger{}
+	app := &cliApp{opsLogger: ml}
+
+	// Step 1: remove 流程
+	if err := app.disableAllFeaturesOnRemove(); err != nil {
+		t.Fatalf("disableAllFeaturesOnRemove 失敗：%v", err)
+	}
+	if err := config.DeleteConfig(); err != nil {
+		t.Fatalf("DeleteConfig 失敗：%v", err)
+	}
+
+	// Step 2: 模擬新 exe 啟動（suffix 重新設定，與舊 exe 相同）
+	// suffix 由 main.go 的 deriveServiceContext 依 exe 父目錄決定，
+	// 相同資料夾 → 相同 suffix → 相同 config 路徑
+	// 此處 suffix = "" (測試環境不設 suffix，確認路徑一致性)
+
+	// Step 3: 執行 status 相關指令 → 應取得 ErrNotInitialized
+	_, loadErr := config.Load()
+	if loadErr == nil {
+		t.Fatal("新 exe 啟動後 Load() 應回傳錯誤（設定已刪除）")
+	}
+	if !isErrNotInitialized(loadErr) {
+		t.Fatalf("期得 ErrNotInitialized，實際：%v", loadErr)
+	}
+}
+
+// isErrNotInitialized 是輔助斷言，縮短測試中的 errors.Is 呼叫。
+func isErrNotInitialized(err error) bool {
+	return errors.Is(err, config.ErrNotInitialized)
 }

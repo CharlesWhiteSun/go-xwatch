@@ -168,11 +168,14 @@ func (c *cliApp) stopAndUninstall() error {
 	}
 	c.logOp("remove step", "step", "已移除 XWatch 註冊之 Windows 服務")
 
-	// 删除設定檔，確保下次 init 會以全新預設値重新初始化
+	// 刪除設定檔，確保下次 init 會以全新預設值重新初始化。
+	// 失敗時主動印出畫面警告，讓使用者知道需手動清除，避免誤以為已完全還原。
 	if err := config.DeleteConfig(); err != nil {
-		c.logOp("remove step", "step", fmt.Sprintf("設定檔删除失敗（非致命）：%v", err))
+		c.logOp("remove step", "step", fmt.Sprintf("設定檔刪除失敗：%v", err))
+		fmt.Fprintf(os.Stderr, "⚠  警告：設定檔無法自動刪除，請手動移除：%v\n", err)
 	} else {
-		c.logOp("remove step", "step", "設定檔已删除")
+		c.logOp("remove step", "step", "設定檔已刪除")
+		fmt.Println("設定檔已清除。")
 	}
 
 	fmt.Println("[5/5] XWatch 註冊之 Windows 服務已移除。")
