@@ -149,67 +149,152 @@ func (c *cliApp) printStatus() error {
 	return nil
 }
 
+// removeAction 描述 remove 流程中各 CLI 功能的處理方式。
+type removeAction uint8
+
+const (
+	removeActionDisable           removeAction = iota // 停用 config 對應的啟用狀態
+	removeActionPreserve                              // 資料保留於磁碟（db / export）
+	removeActionClearedByDeletion                     // 隨設定檔刪除一併清除（env）
+)
+
+// removeFeature 描述一個 CLI 功能在 remove 流程中的處理方式。
+// OCP 資料驅動設計：新增 CLI 功能只需在 buildRemoveFeatures 加一筆資料。
+type removeFeature struct {
+	CmdName string                   // CLI 指令名稱，供 ops-log 記錄
+	Title   string                   // 使用者友善顯示名稱
+	Action  removeAction             // 處理動作類型
+	Disable func(s *config.Settings) // Action==removeActionDisable 時使用
+	Note    string                   // Preserve / ClearedByDeletion 時顯示的說明文字
+}
+
+// buildRemoveFeatures 回傳所有 CLI 功能的 remove 處理描述。
+// 要新增功能時只需在此清單加一筆，stepAndUninstall 自動計算步驟數。
+func buildRemoveFeatures() []removeFeature {
+	return []removeFeature{
+		{
+			CmdName: "heartbeat",
+			Title:   "heartbeat 心跳排程",
+			Action:  removeActionDisable,
+			Disable: func(s *config.Settings) { s.HeartbeatEnabled = false },
+		},
+		{
+			CmdName: "mail",
+			Title:   "mail 郵件排程",
+			Action:  removeActionDisable,
+			Disable: func(s *config.Settings) { s.Mail.Enabled = config.BoolPtr(false) },
+		},
+		{
+			CmdName: "filecheck",
+			Title:   "filecheck 目錄排程",
+			Action:  removeActionDisable,
+			Disable: func(s *config.Settings) {
+				s.Filecheck.Enabled = false
+				s.Filecheck.Mail.Enabled = config.BoolPtr(false)
+			},
+		},
+		{
+			CmdName: "env",
+			Title:   "env 環境設定",
+			Action:  removeActionClearedByDeletion,
+			Note:    "環境設定隨設定檔一併清除。",
+		},
+		{
+			CmdName: "db / export",
+			Title:   "db / export 日誌資料庫",
+			Action:  removeActionPreserve,
+			Note:    "歷史日誌資料庫保留於磁碟，重新 init 後可繼續使用 export 指令匯出。",
+		},
+	}
+}
+
 // stopAndUninstall 停止並移除 Windows 服務，同時停用所有功能並刪除設定檔。
+//
+// 步驟數由 buildRemoveFeatures 自動計算（目前共 8 步）：
+//
+//	[1/N]         停止 Windows 服務
+//	[2/N]~[N-2/N] 逐一處理各 CLI 功能（由 buildRemoveFeatures 決定）
+//	[N-1/N]       解除安裝 Windows 服務
+//	[N/N]         刪除設定檔
+//
+// 設定環境變數 XWATCH_SKIP_SERVICE_OPS=1 可略過 SCM 呼叫（供測試使用）。
 func (c *cliApp) stopAndUninstall() error {
-	if err := service.Stop(c.serviceName); err != nil && !isServiceMissing(err) && !errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
-		return fmt.Errorf("無法停止服務: %w", err)
-	}
-	c.logOp("remove step", "step", "XWatch 註冊之 Windows 服務已主動停止")
-	fmt.Println("[1/5] XWatch 註冊之 Windows 服務已主動停止。")
+	features := buildRemoveFeatures()
+	const fixedSteps = 3 // stop + uninstall + delete config
+	total := fixedSteps + len(features)
+	step := 0
+	next := func() int { step++; return step }
 
-	// 停用所有功能並寫入設定
-	if err := c.disableAllFeaturesOnRemove(); err != nil {
-		// 停用失敗不中斷移除，記錄後繼續
-		c.logOp("remove step", "step", fmt.Sprintf("停用功能失敗（繼續移除）：%v", err))
+	skipSvcOps := os.Getenv("XWATCH_SKIP_SERVICE_OPS") == "1"
+
+	// [1/N] 停止 Windows 服務
+	if !skipSvcOps {
+		if err := service.Stop(c.serviceName); err != nil && !isServiceMissing(err) && !errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
+			return fmt.Errorf("無法停止服務: %w", err)
+		}
+	}
+	c.logOp("remove step", "step", "XWatch 服務已主動停止")
+	fmt.Printf("[%d/%d] XWatch 服務已主動停止。\n", next(), total)
+
+	// 載入設定（盡力嘗試，失敗時仍繼續流程）
+	settings, loadErr := config.Load()
+	hasConfig := loadErr == nil
+
+	// [2/N]~[N-2/N] 遍歷各 CLI 功能
+	for _, f := range features {
+		n := next()
+		switch f.Action {
+		case removeActionDisable:
+			if hasConfig {
+				f.Disable(&settings)
+				c.logOp("remove step", "step", f.CmdName+": 已停用")
+				fmt.Printf("[%d/%d] %s：已停用。\n", n, total, f.Title)
+			} else {
+				c.logOp("remove step", "step", f.CmdName+": 設定檔不存在，略過")
+				fmt.Printf("[%d/%d] %s：設定檔不存在，略過。\n", n, total, f.Title)
+			}
+		case removeActionPreserve:
+			c.logOp("remove step", "step", f.CmdName+": "+f.Note)
+			fmt.Printf("[%d/%d] %s：%s\n", n, total, f.Title, f.Note)
+		case removeActionClearedByDeletion:
+			if hasConfig {
+				c.logOp("remove step", "step", f.CmdName+": "+f.Note)
+				fmt.Printf("[%d/%d] %s：%s\n", n, total, f.Title, f.Note)
+			} else {
+				c.logOp("remove step", "step", f.CmdName+": 設定檔不存在，略過")
+				fmt.Printf("[%d/%d] %s：設定檔不存在，略過。\n", n, total, f.Title)
+			}
+		}
 	}
 
-	if err := service.Uninstall(c.serviceName); err != nil && !isServiceMissing(err) {
-		return fmt.Errorf("無法移除服務: %w", err)
+	// 儲存所有停用變更（單一 I/O，僅在有設定時執行）
+	if hasConfig {
+		if err := config.Save(settings); err != nil {
+			c.logOp("remove step", "step", fmt.Sprintf("停用設定儲存失敗：%v", err))
+		}
 	}
-	c.logOp("remove step", "step", "已移除 XWatch 註冊之 Windows 服務")
 
-	// 刪除設定檔，確保下次 init 會以全新預設值重新初始化。
-	// 失敗時主動印出畫面警告，讓使用者知道需手動清除，避免誤以為已完全還原。
+	// [N-1/N] 解除安裝 Windows 服務
+	if !skipSvcOps {
+		if err := service.Uninstall(c.serviceName); err != nil && !isServiceMissing(err) {
+			return fmt.Errorf("無法移除服務: %w", err)
+		}
+	}
+	c.logOp("remove step", "step", "XWatch 服務已解除安裝")
+	fmt.Printf("[%d/%d] XWatch 服務已解除安裝。\n", next(), total)
+
+	// [N/N] 刪除設定檔
+	// 失敗時印出畫面警告，讓使用者知道需手動清除，避免誤以為已完全還原。
 	if err := config.DeleteConfig(); err != nil {
 		c.logOp("remove step", "step", fmt.Sprintf("設定檔刪除失敗：%v", err))
 		fmt.Fprintf(os.Stderr, "⚠  警告：設定檔無法自動刪除，請手動移除：%v\n", err)
 	} else {
 		c.logOp("remove step", "step", "設定檔已刪除")
-		fmt.Println("設定檔已清除。")
+		fmt.Printf("[%d/%d] 設定檔已刪除。\n", next(), total)
 	}
-
-	fmt.Println("[5/5] XWatch 註冊之 Windows 服務已移除。")
 
 	fmt.Println("所有服務、排程已停止並移除。")
 	return nil
-}
-
-// disableAllFeaturesOnRemove 停用心跳與郵件排程，並將結果寫入 ops-log。
-// 若設定檔無法讀取（如首次安裝未完成），直接回傳 nil 不報錯。
-func (c *cliApp) disableAllFeaturesOnRemove() error {
-	settings, err := config.Load()
-	if err != nil {
-		// 設定檔不存在時不視為錯誤
-		return nil
-	}
-
-	// 停用心跳
-	settings.HeartbeatEnabled = false
-	c.logOp("remove step", "step", "心跳已停用")
-	fmt.Println("[2/5] 心跳已停用。")
-
-	// 停用郵件排程
-	settings.Mail.Enabled = config.BoolPtr(false)
-	c.logOp("remove step", "step", "郵件排程已停用")
-	fmt.Println("[3/5] mail 已停用。")
-
-	// 停用 filecheck 排程
-	settings.Filecheck.Enabled = false
-	settings.Filecheck.Mail.Enabled = config.BoolPtr(false)
-	c.logOp("remove step", "step", "filecheck 排程已停用")
-	fmt.Println("[4/5] filecheck 已停用。")
-
-	return config.Save(settings)
 }
 
 // clearJournal 先停止服務，再刪除並重建日誌資料庫。

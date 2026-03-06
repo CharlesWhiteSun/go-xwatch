@@ -2,7 +2,6 @@ package app
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -79,74 +78,76 @@ func setupRemoveTestConfig(t *testing.T) string {
 	return tmp
 }
 
-// TestDisableAllFeaturesOnRemove_DisablesHeartbeatMailAndFilecheck 確認呼叫後
-// config 中的心跳、郵件排程與 filecheck 排程均已停用。
-func TestDisableAllFeaturesOnRemove_DisablesHeartbeatMailAndFilecheck(t *testing.T) {
-	setupRemoveTestConfig(t)
-
-	ml := &mockLogger{}
-	app := &cliApp{opsLogger: ml}
-
-	if err := app.disableAllFeaturesOnRemove(); err != nil {
-		t.Fatalf("disableAllFeaturesOnRemove failed: %v", err)
+// TestBuildRemoveFeatures_ContainsExpectedCommands 確認 buildRemoveFeatures 回傳
+// 所有預期的 CLI 指令項目（heartbeat / mail / filecheck / env / db / export）。
+func TestBuildRemoveFeatures_ContainsExpectedCommands(t *testing.T) {
+	wantCmds := []string{"heartbeat", "mail", "filecheck", "env", "db / export"}
+	features := buildRemoveFeatures()
+	got := make(map[string]bool, len(features))
+	for _, f := range features {
+		got[f.CmdName] = true
 	}
-
-	loaded, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-	if loaded.HeartbeatEnabled {
-		t.Fatal("預期 HeartbeatEnabled=false，但仍為 true")
-	}
-	if loaded.Mail.IsEnabled() {
-		t.Fatal("預期 Mail.IsEnabled()=false，但仍為 true")
-	}
-	if loaded.Filecheck.Enabled {
-		t.Fatal("預期 Filecheck.Enabled=false，但仍為 true")
-	}
-	if loaded.Filecheck.Mail.IsEnabled() {
-		t.Fatal("預期 Filecheck.Mail.IsEnabled()=false，但仍為 true")
+	for _, cmd := range wantCmds {
+		if !got[cmd] {
+			t.Errorf("buildRemoveFeatures 應包含指令 %q，但未找到", cmd)
+		}
 	}
 }
 
-// TestDisableAllFeaturesOnRemove_LogsSteps 確認停用各功能時都有寫入 ops-log。
-func TestDisableAllFeaturesOnRemove_LogsSteps(t *testing.T) {
-	setupRemoveTestConfig(t)
-
-	ml := &mockLogger{}
-	app := &cliApp{opsLogger: ml}
-
-	if err := app.disableAllFeaturesOnRemove(); err != nil {
-		t.Fatalf("disableAllFeaturesOnRemove failed: %v", err)
-	}
-
-	if !ml.anyArgContains("心跳已停用") {
-		t.Fatal("期望 ops-log 包含「心跳已停用」，但未找到")
-	}
-	if !ml.anyArgContains("郵件排程已停用") {
-		t.Fatal("期望 ops-log 包含「郵件排程已停用」，但未找到")
-	}
-	if !ml.anyArgContains("filecheck 排程已停用") {
-		t.Fatal("期望 ops-log 包含「filecheck 排程已停用」，但未找到")
+// TestBuildRemoveFeatures_DisableFeatures_HaveDisableFn 確認所有
+// removeActionDisable 項目都有非 nil 的 Disable 函式。
+func TestBuildRemoveFeatures_DisableFeatures_HaveDisableFn(t *testing.T) {
+	for _, f := range buildRemoveFeatures() {
+		if f.Action == removeActionDisable && f.Disable == nil {
+			t.Errorf("removeFeature %q: removeActionDisable 必須有 Disable 函式", f.CmdName)
+		}
 	}
 }
 
-// TestDisableAllFeaturesOnRemove_NoConfigNoError 確認 config 檔不存在時
-// disableAllFeaturesOnRemove 不報錯（新安裝未初始化的情境）。
-func TestDisableAllFeaturesOnRemove_NoConfigNoError(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("ProgramData", tmp)
-	t.Setenv("XWATCH_SKIP_ACL", "1")
-	// 預建資料目錄確保 TempDir 清理不受 ACL 影響，但不建立 config.json
-	if err := os.MkdirAll(filepath.Join(tmp, "go-xwatch"), 0o755); err != nil {
-		t.Fatalf("MkdirAll failed: %v", err)
+// TestBuildRemoveFeatures_NonDisableFeatures_HaveNote 確認非 removeActionDisable
+// 項目（env、db / export）都有非空的 Note 說明。
+func TestBuildRemoveFeatures_NonDisableFeatures_HaveNote(t *testing.T) {
+	for _, f := range buildRemoveFeatures() {
+		if f.Action != removeActionDisable && f.Note == "" {
+			t.Errorf("removeFeature %q: action=%d 必須有 Note 說明", f.CmdName, f.Action)
+		}
 	}
+}
 
-	ml := &mockLogger{}
-	app := &cliApp{opsLogger: ml}
-
-	if err := app.disableAllFeaturesOnRemove(); err != nil {
-		t.Fatalf("應容錯 config 不存在，但回傳：%v", err)
+// TestBuildRemoveFeatures_Disable_ActuallyModifiesSettings 針對每個
+// removeActionDisable 項目，確認 Disable 函式確實修改了對應的 Settings 欄位。
+func TestBuildRemoveFeatures_Disable_ActuallyModifiesSettings(t *testing.T) {
+	tr := true
+	for _, f := range buildRemoveFeatures() {
+		if f.Action != removeActionDisable {
+			continue
+		}
+		s := config.Settings{
+			HeartbeatEnabled: true,
+			Mail:             config.MailSettings{Enabled: &tr},
+			Filecheck: config.FilecheckSettings{
+				Enabled: true,
+				Mail:    config.FilecheckMailSettings{Enabled: &tr},
+			},
+		}
+		f.Disable(&s)
+		switch f.CmdName {
+		case "heartbeat":
+			if s.HeartbeatEnabled {
+				t.Errorf("heartbeat Disable 後 HeartbeatEnabled 應為 false")
+			}
+		case "mail":
+			if s.Mail.IsEnabled() {
+				t.Errorf("mail Disable 後 Mail.IsEnabled() 應為 false")
+			}
+		case "filecheck":
+			if s.Filecheck.Enabled {
+				t.Errorf("filecheck Disable 後 Filecheck.Enabled 應為 false")
+			}
+			if s.Filecheck.Mail.IsEnabled() {
+				t.Errorf("filecheck Disable 後 Filecheck.Mail.IsEnabled() 應為 false")
+			}
+		}
 	}
 }
 
@@ -172,77 +173,116 @@ func TestFilecheckEnabledDefaultFalse(t *testing.T) {
 	}
 }
 
-// TestFilecheckDisableOnRemove_PreviouslyEnabled 確認移除前 filecheck 為啟用狀態，
-// 執行 disableAllFeaturesOnRemove 後確實停用。
-func TestFilecheckDisableOnRemove_PreviouslyEnabled(t *testing.T) {
-	setupRemoveTestConfig(t) // 設定中 Filecheck.Enabled=true
+// ── stopAndUninstall 整合測試（XWATCH_SKIP_SERVICE_OPS=1 略過 SCM 呼叫）────────
 
-	// 先確認設定中 filecheck 確實是啟用的
-	before, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load before: %v", err)
-	}
-	if !before.Filecheck.Enabled {
-		t.Skip("setupRemoveTestConfig 沒有啟用 filecheck，跳過此測試")
-	}
-
-	ml := &mockLogger{}
-	app := &cliApp{opsLogger: ml}
-	if err := app.disableAllFeaturesOnRemove(); err != nil {
-		t.Fatalf("disableAllFeaturesOnRemove: %v", err)
-	}
-
-	after, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load after: %v", err)
-	}
-	if after.Filecheck.Enabled {
-		t.Error("disableAllFeaturesOnRemove 後 Filecheck.Enabled 應為 false")
-	}
-	if after.Filecheck.Mail.IsEnabled() {
-		t.Error("disableAllFeaturesOnRemove 後 Filecheck.Mail.IsEnabled() 應為 false")
-	}
-}
-
-// ── remove 後設定刪除相關整合測試 ────────────────────────────────────────
-
-// TestRemove_DisableThenDeleteConfig_IsInitializedFalse
-// 模擬 stopAndUninstall 的 config 相關兩步：
-// disableAllFeaturesOnRemove() 儲存停用設定，接著 config.DeleteConfig() 刪除檔案；
-// 確認刪除後 config.IsInitialized() = false。
-func TestRemove_DisableThenDeleteConfig_IsInitializedFalse(t *testing.T) {
+// TestStopAndUninstall_WithConfig_DisablesAndDeletesConfig 執行完整 remove 流程，
+// 確認設定檔已被刪除（IsInitialized = false）。
+func TestStopAndUninstall_WithConfig_DisablesAndDeletesConfig(t *testing.T) {
 	setupRemoveTestConfig(t)
+	t.Setenv("XWATCH_SKIP_SERVICE_OPS", "1")
 
 	ml := &mockLogger{}
-	app := &cliApp{opsLogger: ml}
+	app := &cliApp{serviceName: "test-svc", opsLogger: ml}
 
-	// 模擬 stopAndUninstall 內的兩步：停用功能 + 刪除設定檔
-	if err := app.disableAllFeaturesOnRemove(); err != nil {
-		t.Fatalf("disableAllFeaturesOnRemove 失敗：%v", err)
-	}
-	if err := config.DeleteConfig(); err != nil {
-		t.Fatalf("DeleteConfig 失敗：%v", err)
+	if err := app.stopAndUninstall(); err != nil {
+		t.Fatalf("stopAndUninstall 失敗：%v", err)
 	}
 
 	if config.IsInitialized() {
-		t.Fatal("config.DeleteConfig 後 IsInitialized() 應為 false")
+		t.Fatal("stopAndUninstall 後 IsInitialized() 應為 false")
+	}
+}
+
+// TestStopAndUninstall_NoConfig_CompletesWithoutError 模擬重複執行 remove
+// （設定檔已不存在）的情境，確認不 panic、不回傳錯誤。
+func TestStopAndUninstall_NoConfig_CompletesWithoutError(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	t.Setenv("XWATCH_SKIP_SERVICE_OPS", "1")
+
+	ml := &mockLogger{}
+	app := &cliApp{serviceName: "test-svc", opsLogger: ml}
+
+	if err := app.stopAndUninstall(); err != nil {
+		t.Fatalf("stopAndUninstall（無 config）失敗：%v", err)
+	}
+}
+
+// TestStopAndUninstall_OpsLog_ContainsAllFeatureEntries 確認 ops-log 包含
+// buildRemoveFeatures 中所有 CmdName 的相關記錄。
+func TestStopAndUninstall_OpsLog_ContainsAllFeatureEntries(t *testing.T) {
+	setupRemoveTestConfig(t)
+	t.Setenv("XWATCH_SKIP_SERVICE_OPS", "1")
+
+	ml := &mockLogger{}
+	app := &cliApp{serviceName: "test-svc", opsLogger: ml}
+
+	if err := app.stopAndUninstall(); err != nil {
+		t.Fatalf("stopAndUninstall 失敗：%v", err)
+	}
+
+	for _, f := range buildRemoveFeatures() {
+		if !ml.anyArgContains(f.CmdName) {
+			t.Errorf("ops-log 應包含功能 %q 的相關記錄，但未找到", f.CmdName)
+		}
+	}
+}
+
+// TestStopAndUninstall_NoConfig_OpsLog_ContainsSkipForAllDisableFeatures
+// 確認 config 不存在時，ops-log 也有為 heartbeat/mail/filecheck 各寫入「略過」記錄。
+func TestStopAndUninstall_NoConfig_OpsLog_ContainsSkipForAllDisableFeatures(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	t.Setenv("XWATCH_SKIP_SERVICE_OPS", "1")
+
+	ml := &mockLogger{}
+	app := &cliApp{serviceName: "test-svc", opsLogger: ml}
+
+	if err := app.stopAndUninstall(); err != nil {
+		t.Fatalf("stopAndUninstall（無 config）失敗：%v", err)
+	}
+
+	for _, f := range buildRemoveFeatures() {
+		if f.Action == removeActionDisable && !ml.anyArgContains(f.CmdName) {
+			t.Errorf("ops-log 應包含 %q 的略過記錄，但未找到", f.CmdName)
+		}
+	}
+}
+
+// ── remove 後設定刪除相關整合測試 ─────────────────────────────────────────────
+
+// TestRemove_DisableThenDeleteConfig_IsInitializedFalse
+// 執行完整 stopAndUninstall 流程後確認 config.IsInitialized() = false。
+func TestRemove_DisableThenDeleteConfig_IsInitializedFalse(t *testing.T) {
+	setupRemoveTestConfig(t)
+	t.Setenv("XWATCH_SKIP_SERVICE_OPS", "1")
+
+	ml := &mockLogger{}
+	app := &cliApp{serviceName: "test-svc", opsLogger: ml}
+
+	if err := app.stopAndUninstall(); err != nil {
+		t.Fatalf("stopAndUninstall 失敗：%v", err)
+	}
+
+	if config.IsInitialized() {
+		t.Fatal("stopAndUninstall 後 IsInitialized() 應為 false")
 	}
 }
 
 // TestRemove_DisableThenDeleteConfig_LoadReturnsErrNotInitialized
-// 同上，確認 remove 完成後 config.Load() 回傳 config.ErrNotInitialized，
+// 執行完整 remove 後確認 config.Load() 回傳 config.ErrNotInitialized，
 // 讓 mail/filecheck/heartbeat status 等子指令顯示友善錯誤，而非原始 os 錯誤。
 func TestRemove_DisableThenDeleteConfig_LoadReturnsErrNotInitialized(t *testing.T) {
 	setupRemoveTestConfig(t)
+	t.Setenv("XWATCH_SKIP_SERVICE_OPS", "1")
 
 	ml := &mockLogger{}
-	app := &cliApp{opsLogger: ml}
+	app := &cliApp{serviceName: "test-svc", opsLogger: ml}
 
-	if err := app.disableAllFeaturesOnRemove(); err != nil {
-		t.Fatalf("disableAllFeaturesOnRemove 失敗：%v", err)
-	}
-	if err := config.DeleteConfig(); err != nil {
-		t.Fatalf("DeleteConfig 失敗：%v", err)
+	if err := app.stopAndUninstall(); err != nil {
+		t.Fatalf("stopAndUninstall 失敗：%v", err)
 	}
 
 	_, err := config.Load()
@@ -259,16 +299,14 @@ func TestRemove_DisableThenDeleteConfig_LoadReturnsErrNotInitialized(t *testing.
 // config 已刪除，Load() 應回傳 ErrNotInitialized（顯示友善錯誤，不顯示舊設定）。
 func TestRemove_FreshExeAfterRemove_StatusCommandShowsNotInitialized(t *testing.T) {
 	setupRemoveTestConfig(t)
+	t.Setenv("XWATCH_SKIP_SERVICE_OPS", "1")
 
 	ml := &mockLogger{}
-	app := &cliApp{opsLogger: ml}
+	app := &cliApp{serviceName: "test-svc", opsLogger: ml}
 
 	// Step 1: remove 流程
-	if err := app.disableAllFeaturesOnRemove(); err != nil {
-		t.Fatalf("disableAllFeaturesOnRemove 失敗：%v", err)
-	}
-	if err := config.DeleteConfig(); err != nil {
-		t.Fatalf("DeleteConfig 失敗：%v", err)
+	if err := app.stopAndUninstall(); err != nil {
+		t.Fatalf("stopAndUninstall 失敗：%v", err)
 	}
 
 	// Step 2: 模擬新 exe 啟動（suffix 重新設定，與舊 exe 相同）
