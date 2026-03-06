@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -9,7 +8,6 @@ import (
 	"strings"
 	"syscall"
 
-	"go-xwatch/internal/cli"
 	"go-xwatch/internal/config"
 	"go-xwatch/internal/crypto"
 	"go-xwatch/internal/exporter"
@@ -19,8 +17,6 @@ import (
 
 	"golang.org/x/sys/windows"
 )
-
-const elevationPrompt = "偵測到目前非系統管理員，是否重新以系統管理員執行？(Y/n): "
 
 func resolveRoot(rootArg string) (string, error) {
 	if rootArg != "" {
@@ -119,42 +115,4 @@ func isServiceMissing(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "service does not exist") || strings.Contains(msg, "does not exist")
-}
-
-func evaluateElevation(skipEnv, interactive, elevated bool, ask func(string) bool, relaunch func([]string) error, args []string) (string, error) {
-	if skipEnv || !interactive || elevated {
-		return "continue", nil
-	}
-
-	if ask(elevationPrompt) {
-		if err := relaunch(args); err != nil {
-			return "continue", err
-		}
-		return "relaunch", nil
-	}
-
-	return "exit", nil
-}
-
-func promptYes(prompt string) bool {
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		fmt.Fprint(os.Stderr, prompt)
-		line, _ := reader.ReadString('\n')
-		line = strings.TrimSpace(line)
-		if line == "" || strings.EqualFold(line, "y") || strings.EqualFold(line, "yes") {
-			return true
-		}
-		if strings.EqualFold(line, "n") || strings.EqualFold(line, "no") {
-			return false
-		}
-	}
-}
-
-func buildCommandRegistry() *cli.Registry {
-	reg := cli.NewRegistry()
-	for _, name := range []string{"init", "help", "status", "start", "stop", "uninstall", "cleanup", "remove", "clear", "purge", "wipe", "export", "daily", "run"} {
-		reg.Register(cli.CommandFunc{CommandName: name, Fn: func([]string) error { return nil }})
-	}
-	return reg
 }
