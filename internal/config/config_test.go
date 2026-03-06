@@ -555,3 +555,65 @@ func TestDeleteConfig_ThenLoadReturnsError(t *testing.T) {
 		t.Error("删除設定檔後 Load 應回傳錯誤，實際得 nil")
 	}
 }
+
+// ── DeleteConfigDir 測試 ──────────────────────────────────────────────
+
+func TestDeleteConfigDir_WithSuffix_RemovesEntireDirectory(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	SetServiceSuffix("test-plant")
+	defer ResetServiceSuffix()
+
+	root := filepath.Join(tmp, "root")
+	if err := Save(Settings{RootDir: root}); err != nil {
+		t.Fatalf("Save 失敗: %v", err)
+	}
+	dir := filepath.Join(tmp, "go-xwatch", "test-plant")
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("設定資料夾應存在: %v", err)
+	}
+
+	if err := DeleteConfigDir(); err != nil {
+		t.Fatalf("DeleteConfigDir 失敗: %v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("DeleteConfigDir 後資料夾應不存在，實際 err: %v", err)
+	}
+}
+
+func TestDeleteConfigDir_NoDirIsOK(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	SetServiceSuffix("nonexistent-suffix")
+	defer ResetServiceSuffix()
+
+	if err := DeleteConfigDir(); err != nil {
+		t.Errorf("DeleteConfigDir 在目錄不存在時不應回傳錯誤，實際: %v", err)
+	}
+}
+
+func TestDeleteConfigDir_EmptySuffix_PreservesBaseDir(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	// suffix = "" （傳統模式）
+
+	root := filepath.Join(tmp, "root")
+	if err := Save(Settings{RootDir: root}); err != nil {
+		t.Fatalf("Save 失敗: %v", err)
+	}
+	baseDir := filepath.Join(tmp, "go-xwatch")
+	configFile := filepath.Join(baseDir, "config.json")
+
+	if err := DeleteConfigDir(); err != nil {
+		t.Fatalf("DeleteConfigDir 失敗: %v", err)
+	}
+	if _, err := os.Stat(configFile); !os.IsNotExist(err) {
+		t.Errorf("設定檔應已刪除，實際 err: %v", err)
+	}
+	if _, err := os.Stat(baseDir); err != nil {
+		t.Errorf("傳統模式共用根目錄應保留，實際 err: %v", err)
+	}
+}

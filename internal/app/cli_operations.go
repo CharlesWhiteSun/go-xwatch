@@ -202,8 +202,8 @@ func buildRemoveFeatures() []removeFeature {
 		{
 			CmdName: "db / export",
 			Title:   "db / export 日誌資料庫",
-			Action:  removeActionPreserve,
-			Note:    "歷史日誌資料庫保留於磁碟，重新 init 後可繼續使用 export 指令匯出。",
+			Action:  removeActionClearedByDeletion,
+			Note:    "日誌資料庫隨資料夾一併刪除。",
 		},
 	}
 }
@@ -215,7 +215,7 @@ func buildRemoveFeatures() []removeFeature {
 //	[1/N]         停止 Windows 服務
 //	[2/N]~[N-2/N] 逐一處理各 CLI 功能（由 buildRemoveFeatures 決定）
 //	[N-1/N]       解除安裝 Windows 服務
-//	[N/N]         刪除設定檔
+//	[N/N]         刪除設定資料夾（後綴為空時僅刪設定檔）
 //
 // 設定環境變數 XWATCH_SKIP_SERVICE_OPS=1 可略過 SCM 呼叫（供測試使用）。
 func (c *cliApp) stopAndUninstall() error {
@@ -283,14 +283,14 @@ func (c *cliApp) stopAndUninstall() error {
 	c.logOp("remove step", "step", "XWatch 服務已解除安裝")
 	fmt.Printf("[%d/%d] XWatch 服務已解除安裝。\n", next(), total)
 
-	// [N/N] 刪除設定檔
+	// [N/N] 刪除設定資料夾（後綴為空時僅刪設定檔）
 	// 失敗時印出畫面警告，讓使用者知道需手動清除，避免誤以為已完全還原。
-	if err := config.DeleteConfig(); err != nil {
-		c.logOp("remove step", "step", fmt.Sprintf("設定檔刪除失敗：%v", err))
-		fmt.Fprintf(os.Stderr, "⚠  警告：設定檔無法自動刪除，請手動移除：%v\n", err)
+	if err := config.DeleteConfigDir(); err != nil {
+		c.logOp("remove step", "step", fmt.Sprintf("設定資料夾刪除失敗：%v", err))
+		fmt.Fprintf(os.Stderr, "⚠  警告：設定資料夾無法自動刪除，請手動移除：%v\n", err)
 	} else {
-		c.logOp("remove step", "step", "設定檔已刪除")
-		fmt.Printf("[%d/%d] 設定檔已刪除。\n", next(), total)
+		c.logOp("remove step", "step", "設定資料夾已移除")
+		fmt.Printf("[%d/%d] 設定資料夾已移除。\n", next(), total)
 	}
 
 	fmt.Println("所有服務、排程已停止並移除。")

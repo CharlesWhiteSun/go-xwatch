@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -327,4 +328,46 @@ func TestRemove_FreshExeAfterRemove_StatusCommandShowsNotInitialized(t *testing.
 // isErrNotInitialized 是輔助斷言，縮短測試中的 errors.Is 呼叫。
 func isErrNotInitialized(err error) bool {
 	return errors.Is(err, config.ErrNotInitialized)
+}
+
+// setupRemoveTestConfigWithSuffix 建立含服務後綴的測試環境。
+func setupRemoveTestConfigWithSuffix(t *testing.T, suffix string) (tmp string) {
+	t.Helper()
+	tmp = t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	config.SetServiceSuffix(suffix)
+	t.Cleanup(config.ResetServiceSuffix)
+	root := filepath.Join(tmp, "root")
+	tr := true
+	if err := config.Save(config.Settings{
+		RootDir:          root,
+		HeartbeatEnabled: true,
+		Mail:             config.MailSettings{Enabled: &tr},
+	}); err != nil {
+		t.Fatalf("setupRemoveTestConfigWithSuffix: Save failed: %v", err)
+	}
+	return tmp
+}
+
+// TestStopAndUninstall_WithSuffix_RemovesConfigDir 確認有服務後綴時，
+// stopAndUninstall 會移除整個設定資料夾。
+func TestStopAndUninstall_WithSuffix_RemovesConfigDir(t *testing.T) {
+	suffix := "test-plant"
+	tmp := setupRemoveTestConfigWithSuffix(t, suffix)
+	t.Setenv("XWATCH_SKIP_SERVICE_OPS", "1")
+
+	ml := &mockLogger{}
+	app := &cliApp{serviceName: "GoXWatch-test-plant", opsLogger: ml}
+
+	dir := filepath.Join(tmp, "go-xwatch", suffix)
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("測試前資料夾應存在：%v", err)
+	}
+	if err := app.stopAndUninstall(); err != nil {
+		t.Fatalf("stopAndUninstall 失敗：%v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("stopAndUninstall 後設定資料夾應已移除，實際 err：%v", err)
+	}
 }

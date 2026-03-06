@@ -315,6 +315,21 @@ func DeleteConfig() error {
 	return nil
 }
 
+// DeleteConfigDir 刪除整個服務資料目錄（包含設定檔、日誌資料庫等所有內容）。
+// 若服務後綴為空（傳統單服務模式），退回只刪設定檔以保護共用根目錄安全。
+// 由 remove 指令在移除服務後呼叫，確保不遺留殘留資料夾。
+func DeleteConfigDir() error {
+	if strings.TrimSpace(activeServiceSuffix) == "" {
+		// 傳統模式：後綴為空，資料目錄為共用根目錄，不得整個刪除
+		return DeleteConfig()
+	}
+	dir, err := paths.DataDirForSuffix(activeServiceSuffix)
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(dir)
+}
+
 func validateAndFillMailDefaults(m MailSettings, env string) (MailSettings, error) {
 	trimmedSchedule := strings.TrimSpace(m.Schedule)
 	if trimmedSchedule == "" {
