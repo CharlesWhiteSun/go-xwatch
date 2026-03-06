@@ -25,6 +25,32 @@ func (c *cliApp) initAndExit(rootArg string, installService bool) error {
 	if err != nil {
 		return err
 	}
+
+	// 依根目錄推導本次服務後綴（例如 "plant-A"）與完整服務名稱（例如 "GoXWatch-plant-A"）。
+	// 必須在首次存取設定檔之前設定，以確保路徑計算正確。
+	newSuffix := service.ServiceSuffixFromRoot(root)
+	newServiceName := service.ServiceNameFromRoot(root)
+	config.SetServiceSuffix(newSuffix)
+	c.serviceName = newServiceName
+
+	// 若準備安裝服務，先偵測是否已有另一個服務監控相同根目錄。
+	if installService {
+		if existing, ferr := service.FindServiceForRoot(root); ferr == nil && existing != "" {
+			if existing == newServiceName {
+				// 相同服務名稱：向使用者確認是否覆蓋（預設 No）。
+				proceed, cerr := c.confirmReinstall(newServiceName)
+				if cerr != nil {
+					return cerr
+				}
+				if !proceed {
+					return nil // 使用者選擇不覆蓋，安全退出
+				}
+			} else {
+				return fmt.Errorf("根目錄 %q 已被服務 %q 監控中，不可重複註冊", root, existing)
+			}
+		}
+	}
+
 	fmt.Println("[2/3] 寫入設定檔...")
 	// 嘗試載入既有設定，若存在則保留所有設定僅更新根目錄；
 	// 設定檔不存在（首次初始化或移除後）則以預設値建立（環境預設 dev）。
@@ -36,12 +62,14 @@ func (c *cliApp) initAndExit(rootArg string, installService bool) error {
 	} else {
 		settings = config.Settings{RootDir: root}
 	}
+	// 將服務名稱寫入設定檔，供日後服務模式自我辨識。
+	settings.ServiceName = newServiceName
 	if err := config.Save(settings); err != nil {
 		return err
 	}
 
 	if installService {
-		fmt.Println("[3/3] 註冊或更新 Windows 服務並啟動...")
+		fmt.Printf("[3/3] 註冊或更新 Windows 服務（%s）並啟動...\n", newServiceName)
 		exePath, err := os.Executable()
 		if err != nil {
 			return err
@@ -51,15 +79,16 @@ func (c *cliApp) initAndExit(rootArg string, installService bool) error {
 			return err
 		}
 
-		if err := service.InstallOrUpdate(c.serviceName, exePath, "--service"); err != nil {
+		// 傳入 --service --name <serviceName> 讓服務模式能正確解析自身名稱。
+		if err := service.InstallOrUpdate(newServiceName, exePath, "--service", "--name", newServiceName); err != nil {
 			return fmt.Errorf("無法註冊服務: %w", err)
 		}
 
-		if err := service.Start(c.serviceName); err != nil && !errors.Is(err, service.ErrAlreadyRunning) {
+		if err := service.Start(newServiceName); err != nil && !errors.Is(err, service.ErrAlreadyRunning) {
 			return fmt.Errorf("無法啟動服務: %w", err)
 		}
 	} else {
-		fmt.Println("[3/3] 已完成設定，未註冊/啟動服務。需註冊請改用 --install-service。")
+		fmt.Printf("[3/3] 已完成設定（服務名稱：%s），未註冊/啟動服務。需註冊請改用 --install-service。\n", newServiceName)
 	}
 
 	fmt.Println("完成。")
@@ -293,6 +322,78 @@ func askYesNo(prompt string) bool {
 			return false
 		}
 	}
+}
+
+// askYesNoDefaultNo 顯示提示並讀取 Y/N 回應，空白輸入預設為 false（不執行）。
+// 該函式用於屬於「讓使用者明確同意才執行」的高風險操作提示。
+// 非互動環境或 XWATCH_NO_PAUSE=1 時，預設回傳 false（不覆蓋）。
+func askYesNoDefaultNo(prompt string) bool {
+	if os.Getenv("XWATCH_NO_PAUSE") == "1" || !isInteractiveConsole() {
+		return false
+	}
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Fprint(os.Stderr, prompt)
+		line, _ := reader.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line == "" || strings.EqualFold(line, "n") || strings.EqualFold(line, "no") {
+			return false
+		}
+		if strings.EqualFold(line, "y") || strings.EqualFold(line, "yes") {
+			return true
+		}
+	}
+}
+
+// resolveRegisteredExePath 回傳服務已登錄的執行檔路徑。
+// 優先使用注入的 registeredExePathFn（測試用），nil 時呼叫 service.RegisteredExePath。
+func (c *cliApp) resolveRegisteredExePath(name string) (string, error) {
+	if c.registeredExePathFn != nil {
+		return c.registeredExePathFn(name)
+	}
+	return service.RegisteredExePath(name)
+}
+
+// confirmReinstall 偵測執行檔路徑是否與登錄的不一致，並要求使用者確認覆蓋。
+//
+// 返回値：
+//   - (true,  nil) ：使用者選擇覆蓋，可繼續執行
+//   - (false, nil) ：使用者選擇不覆蓋，安全退出
+//   - (false, err) ：發生非使用者取消的錯誤
+func (c *cliApp) confirmReinstall(svcName string) (bool, error) {
+	// 取得目前執行檔絕對路徑
+	currentExe, exErr := os.Executable()
+	if exErr == nil {
+		currentExe, _ = filepath.Abs(currentExe)
+	}
+
+	// 從 SCM 讀取服務已登錄的執行檔路徑
+	registeredExe, regErr := c.resolveRegisteredExePath(svcName)
+
+	// 若讀取成功且路徑不同，展示警告（可能是改名的執行檔）
+	if exErr == nil && regErr == nil && registeredExe != "" {
+		absRegistered := filepath.Clean(registeredExe)
+		absCurrent := filepath.Clean(currentExe)
+		if !strings.EqualFold(absRegistered, absCurrent) {
+			fmt.Fprintf(os.Stderr,
+				"⚠  警告：服務 %q 目前登錄的執行檔為：\n  %s\n但現在執行的是：\n  %s\n兩者路徑不同，可能是改名或複製的執行檔，請確認。\n",
+				svcName, absRegistered, absCurrent)
+		}
+	}
+
+	// 展示確認提示（預設 No）
+	confirmFn := askYesNoDefaultNo
+	if c.confirmOverwriteFn != nil {
+		confirmFn = c.confirmOverwriteFn
+	}
+	prompt := fmt.Sprintf("服務 %%q 設定已存在，是否覆蓋現有設定並重新部署？(N/y): ")
+	prompt = fmt.Sprintf(prompt, svcName)
+	if confirmFn(prompt) {
+		fmt.Println("您選擇了覆蓋，繼續執行更新...")
+		return true, nil
+	}
+	fmt.Println("您選擇了不覆蓋，已取消本次初始化操作。")
+	return false, nil
 }
 
 // isServiceMissing 判斷錯誤是否代表 Windows 服務不存在。

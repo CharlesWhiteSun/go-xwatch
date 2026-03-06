@@ -15,6 +15,8 @@ func setupMinimalCLIConfig(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("ProgramData", tmp)
 	t.Setenv("XWATCH_SKIP_ACL", "1")
+	// 確保每個使用此 helper 的測試結束後都以乾淨的 suffix 狀態開始
+	t.Cleanup(config.ResetServiceSuffix)
 	root := filepath.Join(tmp, "root")
 	if err := config.Save(config.Settings{RootDir: root}); err != nil {
 		t.Fatalf("setupMinimalCLIConfig: Save failed: %v", err)
@@ -377,6 +379,7 @@ func TestInitAndExit_FirstTime_UsesDevEnvironment(t *testing.T) {
 	t.Setenv("ProgramData", tmp)
 	t.Setenv("XWATCH_SKIP_ACL", "1")
 	t.Setenv("XWATCH_NO_PAUSE", "1")
+	defer config.ResetServiceSuffix()
 
 	root := filepath.Join(tmp, "root")
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -407,33 +410,35 @@ func TestInitAndExit_FirstTime_UsesDevEnvironment(t *testing.T) {
 	}
 }
 
-// TestInitAndExit_Reinit_PreservesEnvironment 確認再次執行 init 保留已設定的環境。
+// TestInitAndExit_Reinit_PreservesEnvironment 確認對相同根目錄再次執行 init 保留已設定的環境。
+// 在多服務模式下，每個根目錄對應獨立的設定路徑（以後綴區隔），
+// 因此只有 reinit 相同根目錄時，已有設定才會被保留。
 func TestInitAndExit_Reinit_PreservesEnvironment(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("ProgramData", tmp)
 	t.Setenv("XWATCH_SKIP_ACL", "1")
 	t.Setenv("XWATCH_NO_PAUSE", "1")
+	defer config.ResetServiceSuffix()
 
-	root := filepath.Join(tmp, "root")
-	newRoot := filepath.Join(tmp, "newroot")
-	for _, dir := range []string{root, newRoot} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("MkdirAll %s: %v", dir, err)
-		}
+	root := filepath.Join(tmp, "my-plant")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("MkdirAll %s: %v", root, err)
 	}
 
-	// 先建立設定，環境為 prod
+	// 先以正確後綴建立設定（「my-plant」後綴），環境為 prod
+	config.SetServiceSuffix("my-plant")
 	if err := config.Save(config.Settings{RootDir: root, Environment: config.EnvProd}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
+	config.ResetServiceSuffix()
 
 	app := &cliApp{
 		serviceName:        "GoXWatch",
 		serviceInstalledFn: func(_ string) bool { return true },
 	}
 
-	// 再次 init 使用新根目錄
-	if err := app.initAndExit(newRoot, false); err != nil {
+	// 再次 init 相同根目錄，應保留已有設定（suffix 相同 → 同路徑）
+	if err := app.initAndExit(root, false); err != nil {
 		t.Fatalf("initAndExit: %v", err)
 	}
 
@@ -445,40 +450,45 @@ func TestInitAndExit_Reinit_PreservesEnvironment(t *testing.T) {
 	if s.Environment != config.EnvProd {
 		t.Errorf("再次 init 應保留環境 prod，實際：%q", s.Environment)
 	}
-	// 根目錄應已更新
-	if s.RootDir != newRoot {
-		t.Errorf("根目錄應更新為 %q，實際：%q", newRoot, s.RootDir)
+	// 根目錄應一致
+	if s.RootDir != root {
+		t.Errorf("根目錄應為 %q，實際：%q", root, s.RootDir)
 	}
 }
 
-// TestInitAndExit_Reinit_PreservesMailRecipients 確認再次 init 保留已設定的收件人。
+// TestInitAndExit_Reinit_PreservesMailRecipients 確認對相同根目錄再次 init 保留已設定的收件人。
+// 多服務模式下，設定以後綴（根目錄名稱）為 key 獨立儲存，
+// 初次 Save 與後續 initAndExit 必須使用相同後綴才能讀到舊設定。
 func TestInitAndExit_Reinit_PreservesMailRecipients(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("ProgramData", tmp)
 	t.Setenv("XWATCH_SKIP_ACL", "1")
 	t.Setenv("XWATCH_NO_PAUSE", "1")
+	defer config.ResetServiceSuffix()
 
 	root := filepath.Join(tmp, "root")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	// 建立含自訂收件人的設定
+	// 以正確後綴建立含自訂收件人的設定
 	customTo := []string{"admin@example.com", "devops@example.com"}
 	tr := true
+	config.SetServiceSuffix("root")
 	if err := config.Save(config.Settings{
 		RootDir: root,
 		Mail:    config.MailSettings{Enabled: &tr, To: customTo},
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
+	config.ResetServiceSuffix()
 
 	app := &cliApp{
 		serviceName:        "GoXWatch",
 		serviceInstalledFn: func(_ string) bool { return true },
 	}
 
-	// 再次 init 相同根目錄
+	// 再次 init 相同根目錄（suffix "root" → 同路徑，設定保留）
 	if err := app.initAndExit(root, false); err != nil {
 		t.Fatalf("initAndExit: %v", err)
 	}

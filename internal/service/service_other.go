@@ -16,4 +16,7 @@ func Stop(_ string) error                     { return errors.New("unsupported p
 func Uninstall(_ string) error                { return errors.New("unsupported platform") }
 func Status(_ string) (string, error)         { return "", errors.New("unsupported platform") }
 func ServiceAccount(_ string) (string, error) { return "", errors.New("unsupported platform") }
-func Run(_ string, _ string) error            { return errors.New("unsupported platform") }
+func RegisteredExePath(_ string) (string, error) {
+	return "", errors.New("unsupported platform")
+}
+func Run(_ string, _ string) error { return errors.New("unsupported platform") }

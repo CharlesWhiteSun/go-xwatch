@@ -74,9 +74,27 @@ type Settings struct {
 	Filecheck         FilecheckSettings `json:"filecheck"`
 	// Environment 目前執行環境，"dev" 或 "prod"（預設 "prod"）。
 	// 切換環境僅影響「收件人為空時的預設填入清單」，不自動改寫已設定的收件人。
-	Environment string    `json:"environment,omitempty"`
+	Environment string `json:"environment,omitempty"`
+	// ServiceName 記錄此設定檔所關聯的 Windows 服務全名，例如 "GoXWatch-plant-A"。
+	// 空值代表傳統單服務模式（"GoXWatch"）。
+	ServiceName string    `json:"serviceName,omitempty"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
+
+// activeServiceSuffix 為目前程序對應的服務後綴（例如 "plant-A"）。
+// 空值表示傳統單服務模式，路徑維持向後相容。
+// 啟動時透過 SetServiceSuffix 設定一次，不可在執行期間更改。
+var activeServiceSuffix string
+
+// SetServiceSuffix 設定目前程序的服務後綴。
+// 必須在第一次讀寫設定檔之前呼叫。
+func SetServiceSuffix(suffix string) { activeServiceSuffix = strings.TrimSpace(suffix) }
+
+// GetServiceSuffix 回傳目前的服務後綴。
+func GetServiceSuffix() string { return activeServiceSuffix }
+
+// ResetServiceSuffix 將後綴重設為空（主要供測試使用）。
+func ResetServiceSuffix() { activeServiceSuffix = "" }
 
 // FilecheckSettings 設定目錄檔案存在性排程掃描功能。
 type FilecheckSettings struct {
@@ -256,7 +274,7 @@ func filterValidEmails(addrs []string) []string {
 }
 
 func configPath() (string, error) {
-	dir, err := paths.EnsureDataDir()
+	dir, err := paths.EnsureDataDirForSuffix(activeServiceSuffix)
 	if err != nil {
 		return "", err
 	}
@@ -305,7 +323,7 @@ func validateAndFillMailDefaults(m MailSettings, env string) (MailSettings, erro
 		m.Body = DefaultMailBody
 	}
 
-	dataDir, dataErr := paths.DataDir()
+	dataDir, dataErr := paths.DataDirForSuffix(activeServiceSuffix)
 	defaultLogDir := "xwatch-watch-logs"
 	defaultMailLogDir := "xwatch-mail-logs"
 	if dataErr == nil {

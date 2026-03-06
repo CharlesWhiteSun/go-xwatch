@@ -46,6 +46,8 @@ func InstallOrUpdate(name, exePath string, args ...string) error {
 	}
 	defer m.Disconnect()
 
+	displayName := buildDisplayName(name)
+
 	s, err := m.OpenService(name)
 	if err == nil {
 		defer s.Close()
@@ -54,7 +56,7 @@ func InstallOrUpdate(name, exePath string, args ...string) error {
 		if cfgErr != nil {
 			return fmt.Errorf("read service config failed: %w", cfgErr)
 		}
-		cfg.DisplayName = "Go XWatch Service"
+		cfg.DisplayName = displayName
 		cfg.Description = "Watch filesystem changes under configured root directory"
 		cfg.StartType = mgr.StartAutomatic
 		cfg.DelayedAutoStart = true
@@ -63,7 +65,7 @@ func InstallOrUpdate(name, exePath string, args ...string) error {
 	}
 
 	config := mgr.Config{
-		DisplayName:      "Go XWatch Service",
+		DisplayName:      displayName,
 		Description:      "Watch filesystem changes under configured root directory",
 		StartType:        mgr.StartAutomatic,
 		DelayedAutoStart: true,
@@ -75,6 +77,17 @@ func InstallOrUpdate(name, exePath string, args ...string) error {
 	}
 	defer s.Close()
 	return nil
+}
+
+// buildDisplayName 從服務名稱建立人類可讀的顯示名稱。
+// "GoXWatch"           → "Go XWatch Service"
+// "GoXWatch-plant-A"   → "Go XWatch Service (plant-A)"
+func buildDisplayName(name string) string {
+	suffix := SuffixFromServiceName(name)
+	if suffix == "" {
+		return "Go XWatch Service"
+	}
+	return fmt.Sprintf("Go XWatch Service (%s)", suffix)
 }
 
 func formatBinaryPath(exePath string, args []string) string {
@@ -200,6 +213,26 @@ func ServiceAccount(name string) (string, error) {
 		account = "LocalSystem"
 	}
 	return account, nil
+}
+
+// RegisteredExePath 從 Windows SCM 讀取指定服務已登錄的執行檔絕對路徑。
+// 若服務不存在或無法連線 SCM，回傳錯誤。
+func RegisteredExePath(name string) (string, error) {
+	m, err := mgr.Connect()
+	if err != nil {
+		return "", err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(name)
+	if err != nil {
+		return "", err
+	}
+	defer s.Close()
+	cfg, err := s.Config()
+	if err != nil {
+		return "", err
+	}
+	return parseExeFromBinaryPath(cfg.BinaryPathName), nil
 }
 
 func Run(serviceName string, settings config.Settings) error {

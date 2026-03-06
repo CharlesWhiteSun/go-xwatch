@@ -41,6 +41,14 @@ type cliApp struct {
 
 	// serviceInstalledFn 用於檢查服務是否已安裝，便於測試注入。nil 時使用 service.IsInstalled。
 	serviceInstalledFn func(name string) bool
+
+	// confirmOverwriteFn 用於服務重新部署時的使用者確認，便於測試注入。
+	// nil 時使用 askYesNoDefaultNo（預設 No）。
+	confirmOverwriteFn func(prompt string) bool
+
+	// registeredExePathFn 用於查詢服務已登錄的執行檔路徑，便於測試注入。
+	// nil 時使用 service.RegisteredExePath。
+	registeredExePathFn func(name string) (string, error)
 }
 
 func (c *cliApp) run() int {
