@@ -237,19 +237,21 @@ func RegisteredExePath(name string) (string, error) {
 }
 
 func Run(serviceName string, settings config.Settings) error {
-	return svc.Run(serviceName, &handler{settings: settings})
+	return svc.Run(serviceName, &handler{settings: settings, serviceName: serviceName})
 }
 
 type handler struct {
-	settings config.Settings
+	settings    config.Settings
+	serviceName string // 直接儲存，不依賴 settings.ServiceName 是否已寫入 config 檔案
 }
 
 func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
 	const accepted = svc.AcceptStop | svc.AcceptShutdown
 	changes <- svc.Status{State: svc.StartPending}
 
-	// 依服務名稱推導後綴，確保各實例的資料目錄完全隔離。
-	suffix := SuffixFromServiceName(h.settings.ServiceName)
+	// 使用 h.serviceName（由 Run 傳入），而非 h.settings.ServiceName（可能為空），
+	// 確保即使 config.json 是舊版本（未寫入 serviceName 欄位）也能正確隔離資料目錄。
+	suffix := SuffixFromServiceName(h.serviceName)
 	dataDirFn := func() (string, error) { return paths.EnsureDataDirForSuffix(suffix) }
 
 	watchLogRotator := NewRotatingLogger("watch", "xwatch-watch-logs", dataDirFn, watcher.NewLogger)
