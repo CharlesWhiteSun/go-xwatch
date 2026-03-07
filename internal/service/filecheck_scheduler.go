@@ -67,7 +67,7 @@ func (r *Runner) runFilecheckManager(ctx context.Context, logger *slog.Logger) {
 		if s.Filecheck.Mail.IsEnabled() {
 			mailCtx, cancelMail := context.WithCancel(ctx)
 			mailCancel = cancelMail
-			go runFilecheckMailScheduler(mailCtx, logger, s, nowFn)
+			go runFilecheckMailScheduler(mailCtx, logger, s, nowFn, r.dataDirFn())
 			logger.Info(fmt.Sprintf("已啟用 filecheck 郵件排程器，排程時間：%s", s.Filecheck.Mail.Schedule))
 		}
 	}
@@ -101,7 +101,8 @@ func (r *Runner) runFilecheckManager(ctx context.Context, logger *slog.Logger) {
 }
 
 // runFilecheckMailScheduler 依設定的 HH:MM 時間每日寄送 filecheck 報告。
-func runFilecheckMailScheduler(ctx context.Context, logger *slog.Logger, s config.Settings, now func() time.Time) {
+// dataDirFn 提供服務對應的資料目錄（含後綴），用於決定 filecheck log 的寫入位置。
+func runFilecheckMailScheduler(ctx context.Context, logger *slog.Logger, s config.Settings, now func() time.Time, dataDirFn func() (string, error)) {
 	if now == nil {
 		now = time.Now
 	}
@@ -140,7 +141,7 @@ func runFilecheckMailScheduler(ctx context.Context, logger *slog.Logger, s confi
 			timer.Stop()
 			return
 		case <-timer.C:
-			if err := sendFilecheckMail(ctx, logger, s, loc, now(), nil); err != nil {
+			if err := sendFilecheckMail(ctx, logger, s, loc, now(), nil, dataDirFn); err != nil {
 				logger.Error(fmt.Sprintf("filecheck 每日寄信失敗：%v", err))
 			}
 		}
@@ -154,7 +155,8 @@ type filecheckSendFn func(ctx context.Context, cfg mailer.SMTPConfig, subject, b
 // sendFilecheckMail 主動對前一日各路徑執行檔案存在性檢查，
 // 並將結果以純文字郵件寄出。無論任何路徑是否有檔案，皆會寄送報告。
 // sendFn 供測試注入，nil 時使用 mailer.SendTextMail。
-func sendFilecheckMail(ctx context.Context, logger *slog.Logger, s config.Settings, loc *time.Location, now time.Time, sendFn filecheckSendFn) error {
+// dataDirFn 決定 filecheck log 寫入的資料目錄（應含服務後綴）；nil 時以全域 suffix 推導。
+func sendFilecheckMail(ctx context.Context, logger *slog.Logger, s config.Settings, loc *time.Location, now time.Time, sendFn filecheckSendFn, dataDirFn func() (string, error)) error {
 	if sendFn == nil {
 		sendFn = mailer.SendTextMail
 	}
@@ -175,7 +177,13 @@ func sendFilecheckMail(ctx context.Context, logger *slog.Logger, s config.Settin
 	subject, body := filecheck.BuildMailReport(scanDir, files, targetDay, scanErr)
 
 	// 寫入 filecheck log（不影響寄信流程）
-	if dataDir, err := paths.DataDir(); err != nil {
+	resolvedDataDirFn := dataDirFn
+	if resolvedDataDirFn == nil {
+		resolvedDataDirFn = func() (string, error) {
+			return paths.EnsureDataDirForSuffix(config.GetServiceSuffix())
+		}
+	}
+	if dataDir, err := resolvedDataDirFn(); err != nil {
 		logger.Warn(fmt.Sprintf("取得資料目錄失敗（filecheck log 略過）：%v", err))
 	} else {
 		if err := filecheck.WriteLog(filecheck.DefaultLogDir(dataDir), scanDir, files, targetDay, scanErr, now); err != nil {
