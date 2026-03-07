@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go-xwatch/internal/config"
+	"go-xwatch/internal/heartbeat"
 	"go-xwatch/internal/paths"
 	"go-xwatch/internal/watcher"
 
@@ -243,12 +244,15 @@ type handler struct {
 	settings config.Settings
 }
 
-var watchLogRotator = NewRotatingLogger("watch", "xwatch-watch-logs", paths.EnsureDataDir, watcher.NewLogger)
-
 func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
 	const accepted = svc.AcceptStop | svc.AcceptShutdown
 	changes <- svc.Status{State: svc.StartPending}
 
+	// 依服務名稱推導後綴，確保各實例的資料目錄完全隔離。
+	suffix := SuffixFromServiceName(h.settings.ServiceName)
+	dataDirFn := func() (string, error) { return paths.EnsureDataDirForSuffix(suffix) }
+
+	watchLogRotator := NewRotatingLogger("watch", "xwatch-watch-logs", dataDirFn, watcher.NewLogger)
 	logger, closeLogger, err := watchLogRotator.Logger()
 	if err != nil {
 		return false, 1
@@ -258,7 +262,18 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, changes chan
 	ctx, cancel := context.WithCancel(context.Background())
 	// Runner.Run 內部的 runMailSchedulerManager 負責郵件排程熱重載，
 	// 不需在此額外啟動 runMailScheduler（避免靜態快照問題）。
-	runner := &Runner{Settings: h.settings, Logger: logger}
+	runner := &Runner{
+		Settings:  h.settings,
+		Logger:    logger,
+		DataDirFn: dataDirFn,
+		HeartbeatLogDirFn: func() (string, error) {
+			dir, err := dataDirFn()
+			if err != nil {
+				return "", err
+			}
+			return heartbeat.LogDirForDataDir(dir), nil
+		},
+	}
 	runCh := make(chan error, 1)
 	go func() {
 		runCh <- runner.Run(ctx)

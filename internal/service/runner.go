@@ -187,7 +187,10 @@ func (r *Runner) dataDirFn() func() (string, error) {
 	if r.DataDirFn != nil {
 		return r.DataDirFn
 	}
-	return paths.EnsureDataDir
+	// 防穩性 fallback：若呼叫端未注入 DataDirFn，則根據全域設定的 suffix 推導正確資料目錄。
+	return func() (string, error) {
+		return paths.EnsureDataDirForSuffix(config.GetServiceSuffix())
+	}
 }
 
 func (r *Runner) watcherFn() func(ctx context.Context, root string, logger *slog.Logger, onEvent func(watcher.Event)) error {
@@ -379,7 +382,12 @@ func (r *Runner) heartbeatLogDir() (string, error) {
 	if r.HeartbeatLogDirFn != nil {
 		return r.HeartbeatLogDirFn()
 	}
-	return heartbeat.DefaultLogDir()
+	// 防穩性 fallback：依直尤全域 suffix 推導正確心跳 log 目錄。
+	dataDir, err := paths.EnsureDataDirForSuffix(config.GetServiceSuffix())
+	if err != nil {
+		return "", err
+	}
+	return heartbeat.LogDirForDataDir(dataDir), nil
 }
 
 func (r *Runner) mailSchedulerFn() func(ctx context.Context, logger *slog.Logger, mail config.MailSettings, rootDir string, now func() time.Time) {

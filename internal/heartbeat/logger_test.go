@@ -30,6 +30,15 @@ func TestDefaultLogDir_ReturnsCorrectPath(t *testing.T) {
 	}
 }
 
+func TestLogDirForDataDir_ReturnsCorrectSubdir(t *testing.T) {
+	base := filepath.Join("C:", "ProgramData", "go-xwatch", "plant-A")
+	got := LogDirForDataDir(base)
+	want := filepath.Join(base, "xwatch-heartbeat-logs")
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 func TestWriteEntry_CreatesFileAndContent(t *testing.T) {
 	tmp := t.TempDir()
 	logDir := filepath.Join(tmp, "hb-logs")

@@ -10,6 +10,7 @@ import (
 	"go-xwatch/internal/app"
 	"go-xwatch/internal/config"
 	"go-xwatch/internal/opslog"
+	"go-xwatch/internal/paths"
 	"go-xwatch/internal/service"
 )
 
@@ -21,7 +22,11 @@ var serviceName = legacyServiceName
 
 var version = "dev"
 
-var opsLogger = opslog.New(nil)
+// opsLogger 使用 lazy closure，在實際寫入時再解析 suffix，
+// 確保 xwatch-ops-logs 落入正確的服務實例子目錄。
+var opsLogger = opslog.New(func() (string, error) {
+	return paths.EnsureDataDirForSuffix(config.GetServiceSuffix())
+})
 
 func main() {
 	if runtime.GOOS != "windows" {

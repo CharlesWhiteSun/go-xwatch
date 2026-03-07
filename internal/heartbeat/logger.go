@@ -11,13 +11,19 @@ import (
 const defaultLogSubDir = "xwatch-heartbeat-logs"
 
 // DefaultLogDir 回傳預設心跳 log 目錄路徑：
-// %ProgramData%\go-xwatch\xwatch-heartbeat
+// %ProgramData%\go-xwatch\xwatch-heartbeat-logs
 func DefaultLogDir() (string, error) {
 	pd := os.Getenv("ProgramData")
 	if pd == "" {
 		return "", fmt.Errorf("ProgramData 環境變數未設定")
 	}
 	return filepath.Join(pd, "go-xwatch", defaultLogSubDir), nil
+}
+
+// LogDirForDataDir 回傳以指定資料目錄為基礎的心跳 log 目錄：
+// <dataDir>\xwatch-heartbeat-logs
+func LogDirForDataDir(dataDir string) string {
+	return filepath.Join(dataDir, defaultLogSubDir)
 }
 
 // WriteEntry 將一筆心跳記錄附加到日期分檔的 log 中。

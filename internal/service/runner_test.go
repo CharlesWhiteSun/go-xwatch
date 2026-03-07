@@ -918,3 +918,45 @@ func TestRunnerHeartbeat_MailEnableDoesNotTriggerHeartbeat(t *testing.T) {
 		t.Error("mail enable 熱重載應啟動 MailSchedulerFn，但未被呼叫")
 	}
 }
+
+// TestRunnerDataDirFn_FallbackUsesSuffix 確認當 DataDirFn 未注入時，
+// runner 的預設 dataDirFn fallback 會使用 config.GetServiceSuffix() 所指定的後綴路徑。
+func TestRunnerDataDirFn_FallbackUsesSuffix(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1") // 避免 ACL 限制造成 TempDir 清理失敗
+	config.SetServiceSuffix("plant-A")
+	defer config.SetServiceSuffix("")
+
+	r := &Runner{}
+	fn := r.dataDirFn()
+	dir, err := fn()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(dir, "plant-A") {
+		t.Fatalf("expected suffix 'plant-A' in path, got %s", dir)
+	}
+}
+
+// TestRunnerHeartbeatLogDir_FallbackUsesSuffixSubdir 確認當 HeartbeatLogDirFn 未注入時，
+// runner 的 heartbeatLogDir fallback 會使用 config.GetServiceSuffix() 下的 xwatch-heartbeat-logs。
+func TestRunnerHeartbeatLogDir_FallbackUsesSuffixSubdir(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1") // 避免 ACL 限制造成 TempDir 清理失敗
+	config.SetServiceSuffix("plant-B")
+	defer config.SetServiceSuffix("")
+
+	r := &Runner{}
+	dir, err := r.heartbeatLogDir()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(dir, "plant-B") {
+		t.Fatalf("expected suffix 'plant-B' in path, got %s", dir)
+	}
+	if !strings.HasSuffix(dir, "xwatch-heartbeat-logs") {
+		t.Fatalf("expected path ending with 'xwatch-heartbeat-logs', got %s", dir)
+	}
+}
