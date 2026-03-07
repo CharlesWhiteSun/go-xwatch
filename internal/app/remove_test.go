@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"go-xwatch/internal/config"
+	"go-xwatch/internal/opslog"
+	"go-xwatch/internal/paths"
 )
 
 // mockLogger 收集 op log 訊息供測試驗證。
@@ -370,4 +372,73 @@ func TestStopAndUninstall_WithSuffix_RemovesConfigDir(t *testing.T) {
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("stopAndUninstall 後設定資料夾應已移除，實際 err：%v", err)
 	}
+}
+
+// mockClosableLogger 擴充 mockLogger，額外實作 io.Closer，追蹤 Close() 是否被呼叫。
+type mockClosableLogger struct {
+	mockLogger
+	closedAt int // 記錄 Close() 被呼叫時 msgs 的長度，以驗證呼叫順序
+	closed   bool
+}
+
+func (m *mockClosableLogger) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closed = true
+	m.closedAt = len(m.msgs)
+	return nil
+}
+
+// TestStopAndUninstall_CallsCloseOnOpsLogger
+// 確認 stopAndUninstall 在刪除設定目錄之前有呼叫 opsLogger.Close()。
+// 本測試以 mockClosableLogger 追蹤 Close() 是否被呼叫。
+func TestStopAndUninstall_CallsCloseOnOpsLogger(t *testing.T) {
+	suffix := "close-test"
+	setupRemoveTestConfigWithSuffix(t, suffix)
+	t.Setenv("XWATCH_SKIP_SERVICE_OPS", "1")
+
+	ml := &mockClosableLogger{}
+	app := &cliApp{serviceName: "GoXWatch-close-test", opsLogger: ml}
+
+	if err := app.stopAndUninstall(); err != nil {
+		t.Fatalf("stopAndUninstall 失敗：%v", err)
+	}
+
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	if !ml.closed {
+		t.Error("stopAndUninstall 應在刪除設定目錄前呼叫 opsLogger.Close()，但未被呼叫")
+	}
+}
+
+// TestStopAndUninstall_WithRealOpsLog_DeletesDirWithoutFileLockError
+// 驗證修正前的真實問題場景：opslog.Logger 在 data directory 中建立了 log 檔案，
+// stopAndUninstall 必須在刪除目錄前關閉該檔案控制代碼，否則 Windows 檔案鎖定
+// 會導致 RemoveAll 失敗並出現「The process cannot access the file...」錯誤。
+func TestStopAndUninstall_WithRealOpsLog_DeletesDirWithoutFileLockError(t *testing.T) {
+	suffix := "real-opslog-test"
+	tmp := setupRemoveTestConfigWithSuffix(t, suffix)
+	t.Setenv("XWATCH_SKIP_SERVICE_OPS", "1")
+
+	// 建立真實的 opslog.Logger，並讓它在 data directory 內開啟 log 檔案
+	logger := opslog.New(func() (string, error) {
+		return paths.EnsureDataDirForSuffix(suffix)
+	})
+	// 寫入一筆記錄觸發檔案建立（模擬服務運行中的 ops log 寫入）
+	logger.Info("test before remove")
+
+	app := &cliApp{serviceName: "GoXWatch-" + suffix, opsLogger: logger}
+
+	if err := app.stopAndUninstall(); err != nil {
+		t.Fatalf("stopAndUninstall 失敗：%v", err)
+	}
+
+	// 驗證整個 suffix 資料目錄（含 opslog 檔案）已成功刪除
+	dataDir, _ := paths.DataDirForSuffix(suffix)
+	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
+		t.Errorf("stopAndUninstall 後 suffix 資料目錄應完整刪除，但仍存在（err: %v）；"+
+			"修正前此處會因 Windows 檔案鎖定失敗，路徑：%s", err, dataDir)
+	}
+
+	_ = tmp // 宣告使用，避免 unused 警告
 }

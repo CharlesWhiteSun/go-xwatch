@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -157,6 +158,19 @@ func (c *cliApp) logOp(msg string, args ...any) {
 		return
 	}
 	c.opsLogger.Info(msg, args...)
+}
+
+// closeOpsLogger 關閉 opsLogger 的底層檔案控制代碼（若有實作 io.Closer），
+// 並將欄位設為 nil，防止後續對已刪除目錄的寫入。
+// 若 opsLogger 不支援 Close()（例如測試用 mock），此操作為 no-op。
+func (c *cliApp) closeOpsLogger() {
+	if c.opsLogger == nil {
+		return
+	}
+	if closer, ok := c.opsLogger.(io.Closer); ok {
+		_ = closer.Close()
+	}
+	c.opsLogger = nil
 }
 
 // isServiceInstalled 回傳服務是否已安裝，支援測試注入自訂實作。

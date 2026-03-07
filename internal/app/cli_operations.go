@@ -332,6 +332,12 @@ func (c *cliApp) stopAndUninstall() error {
 	c.logOp("remove step", "step", "XWatch 服務已解除安裝")
 	fmt.Printf("[%d/%d] XWatch 服務已解除安裝。\n", next(), total)
 
+	// 在刪除設定資料夾之前主動關閉 ops log 檔案控制代碼。
+	// Windows 檔案鎖定機制會阻止刪除仍被開啟的檔案，
+	// 若 opsLogger 為寫入同一目錄的 *opslog.Logger，不先關閉將導致
+	// xwatch-ops-logs/operations_YYYY-MM-DD.log 被鎖定，RemoveAll 失敗。
+	c.closeOpsLogger()
+
 	// [N/N] 刪除設定資料夾（後綴為空時僅刪設定檔）
 	// 失敗時印出畫面警告，讓使用者知道需手動清除，避免誤以為已完全還原。
 	if err := config.DeleteConfigDir(); err != nil {
