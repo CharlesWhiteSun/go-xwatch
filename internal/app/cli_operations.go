@@ -79,6 +79,12 @@ func (c *cliApp) initAndExit(rootArg string, installService bool) error {
 			return err
 		}
 
+		// 寫入安裝版本，供日後版本一致性檢查使用。
+		settings.InstalledVersion = c.version
+		if err := config.Save(settings); err != nil {
+			return err
+		}
+
 		// 傳入 --service --name <serviceName> 讓服務模式能正確解析自身名稱。
 		if err := service.InstallOrUpdate(newServiceName, exePath, "--service", "--name", newServiceName); err != nil {
 			return fmt.Errorf("無法註冊服務: %w", err)
@@ -609,6 +615,34 @@ func (c *cliApp) confirmReinstall(svcName string) (bool, error) {
 	}
 	fmt.Println("您選擇了不覆蓋，已取消本次初始化操作。")
 	return false, nil
+}
+
+// checkVersionConsistency 在 CLI 啟動時檢查目前執行檔版本是否與服務安裝版本一致。
+// 若服務尚未安裝、設定檔不存在、或未記錄安裝版本，則跳過檢查（静默通過）。
+// 版本不一致時回傳含明確提示的錯誤，供呼叫端輸出後終止程式。
+func (c *cliApp) checkVersionConsistency() error {
+	if !c.isServiceInstalled() {
+		return nil // 服務未安裝，無需檢查
+	}
+	settings, err := config.Load()
+	if err != nil {
+		return nil // 設定不存在或無法讀取，跳過
+	}
+	installed := strings.TrimSpace(settings.InstalledVersion)
+	if installed == "" {
+		return nil // 舊版安裝未記錄版本，向後相容
+	}
+	current := strings.TrimSpace(c.version)
+	if current == installed {
+		return nil // 版本一致，正常
+	}
+	return fmt.Errorf(
+		"版本不一致\n"+
+			"目前執行檔版本：%s\n"+
+			"服務安裝版本：%s\n"+
+			"請改用正確版本（%s）的主程式執行，或重新執行 `init --install-service` 將服務更新至目前版本。",
+		current, installed, installed,
+	)
 }
 
 // isServiceMissing 判斷錯誤是否代表 Windows 服務不存在。

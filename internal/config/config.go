@@ -93,8 +93,11 @@ type Settings struct {
 	Environment string `json:"environment,omitempty"`
 	// ServiceName 記錄此設定檔所關聯的 Windows 服務全名，例如 "GoXWatch-plant-A"。
 	// 空值代表傳統單服務模式（"GoXWatch"）。
-	ServiceName string    `json:"serviceName,omitempty"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ServiceName string `json:"serviceName,omitempty"`
+	// InstalledVersion 記錄服務安裝（init --install-service）時的程式版本號。
+	// 供 CLI 啟動時進行版本一致性檢查，避免不同版本的主程式操作服務。
+	InstalledVersion string    `json:"installedVersion,omitempty"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 // activeServiceSuffix 為目前程序對應的服務後綴（例如 "plant-A"）。

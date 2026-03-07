@@ -81,6 +81,14 @@ func (c *cliApp) run() int {
 		return 0
 	}
 
+	// 期始版本一致性檢查：确保執行檔版本與服務安裝版本相符
+	if err := c.checkVersionConsistency(); err != nil {
+		fmt.Fprintln(os.Stderr, "⚠  錯誤："+err.Error())
+		c.logOp("cli exit", "code", 1, "reason", "version_mismatch", "current", c.version)
+		time.Sleep(3 * time.Second)
+		return 1
+	}
+
 	exitCode := 0
 	for {
 		if err := c.runInteractive(); err != nil {
