@@ -88,7 +88,17 @@ func (c *cliApp) initAndExit(rootArg string, installService bool) error {
 			return fmt.Errorf("無法啟動服務: %w", err)
 		}
 	} else {
-		fmt.Printf("[3/3] 已完成設定（服務名稱：%s），未註冊/啟動服務。需註冊請改用 --install-service。\n", newServiceName)
+		if c.isServiceInstalled() {
+			// 服務已存在：依狀態顯示提示，避免誤導使用者以為服務尚未註冊
+			st, _ := c.getServiceStatus(c.serviceName)
+			if st == "running" {
+				fmt.Printf("[3/3] 設定已更新，服務（%s）目前正在執行中。\n", newServiceName)
+			} else {
+				fmt.Printf("[3/3] 設定已更新，服務（%s）已存在但目前停止，可執行 `start` 重新啟動。\n", newServiceName)
+			}
+		} else {
+			fmt.Printf("[3/3] 已完成設定（服務名稱：%s），服務尚未安裝，需安裝服務請改用 --install-service。\n", newServiceName)
+		}
 	}
 
 	fmt.Println("完成。")
@@ -97,15 +107,18 @@ func (c *cliApp) initAndExit(rootArg string, installService bool) error {
 
 // printStatus 輸出服務狀態、權限等級及設定摘要。
 func (c *cliApp) printStatus() error {
-	status, err := service.Status(c.serviceName)
+	status, err := c.getServiceStatus(c.serviceName)
 	if err != nil {
 		if isServiceMissing(err) {
-			fmt.Fprintln(os.Stderr, "提示：服務尚未安裝。請先執行『init --install-service』安裝 Windows 服務後，再使用 status 指令查看完整狀態。")
+			fmt.Fprintln(os.Stderr, "提示：服務尚未安裝。請先執行「init --install-service」安裝 Windows 服務後，再使用 status 指令查看完整狀態。")
 		}
 		return err
 	}
 	fmt.Println("service:", c.serviceName)
 	fmt.Println("status:", status)
+	if status == "stopped" {
+		fmt.Println("提示：服務已停止，可執行 `start` 重新啟動。")
+	}
 
 	// 顯示目前 CLI 執行的 Windows 權限等級
 	if isElevated() {
