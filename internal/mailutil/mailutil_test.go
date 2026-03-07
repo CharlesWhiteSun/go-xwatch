@@ -539,3 +539,39 @@ func TestResolveSMTPConfig_FromFallsBackToUser(t *testing.T) {
 
 // 確保 mailer 套件被引用（避免 unused import 編譯錯誤）
 var _ mailer.SMTPConfig
+
+// ── ResolveLogDirForDataDir ───────────────────────────────────────────────────
+
+func TestResolveLogDirForDataDir_EmptyConfig_UsesDataDir(t *testing.T) {
+	dataDir := filepath.Join("C:", "ProgramData", "go-xwatch", "inst1")
+	got := mailutil.ResolveLogDirForDataDir("", dataDir)
+	want := filepath.Join(dataDir, "xwatch-watch-logs")
+	if got != want {
+		t.Errorf("空 configPath 時應以 dataDir 組合預設目錄：期望 %q，實際 %q", want, got)
+	}
+}
+
+func TestResolveLogDirForDataDir_EmptyBoth_ReturnsEmpty(t *testing.T) {
+	got := mailutil.ResolveLogDirForDataDir("", "")
+	if got != "" {
+		t.Errorf("configPath 與 dataDir 均為空時應回傳空字串，實際：%q", got)
+	}
+}
+
+func TestResolveLogDirForDataDir_NonEmptyConfig_ReturnsAbsPath(t *testing.T) {
+	tmp := t.TempDir()
+	absPath := filepath.Join(tmp, "custom-logs")
+	got := mailutil.ResolveLogDirForDataDir(absPath, "any-data-dir")
+	if got != absPath {
+		t.Errorf("非空 configPath 應原樣回傳絕對路徑：期望 %q，實際 %q", absPath, got)
+	}
+}
+
+func TestResolveLogDirForDataDir_WhitespaceConfig_TreatedAsEmpty(t *testing.T) {
+	dataDir := filepath.Join("C:", "ProgramData", "go-xwatch", "myinst")
+	got := mailutil.ResolveLogDirForDataDir("   ", dataDir)
+	want := filepath.Join(dataDir, "xwatch-watch-logs")
+	if got != want {
+		t.Errorf("空白字串 configPath 應視為空：期望 %q，實際 %q", want, got)
+	}
+}

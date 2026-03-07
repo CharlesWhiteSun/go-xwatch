@@ -106,6 +106,60 @@ func TestExportDefaultPath(t *testing.T) {
 	}
 }
 
+// TestExportWithDataDirFn 確認 WithDataDirFn 讓 Export 從指定後綴子目錄讀取資料，
+// 而非退化到基底目錄（修正 multi-instance 環境下 export 找不到 key.bin / journal.db 的 bug）。
+func TestExportWithDataDirFn(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	// 建立後綴子目錄，模擬 multi-instance 服務資料（e.g. --suffix plant-A）
+	suffixDir := filepath.Join(tmp, "go-xwatch", "plant-A")
+	if err := os.MkdirAll(suffixDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	key, err := crypto.LoadOrCreateKey(filepath.Join(suffixDir, "key.bin"), 32)
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+
+	j, err := journal.Open(filepath.Join(suffixDir, "journal.db"), key)
+	if err != nil {
+		t.Fatalf("open journal: %v", err)
+	}
+	entries := []journal.Entry{
+		{TS: time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), Op: "CREATE", Path: "report.csv"},
+	}
+	if err := j.Append(context.Background(), entries); err != nil {
+		j.Close()
+		t.Fatal(err)
+	}
+	j.Close()
+
+	outFile := filepath.Join(tmp, "out.json")
+	err = Export("", "", 10, "json", true, false, outFile,
+		WithDataDirFn(func() (string, error) { return suffixDir, nil }),
+	)
+	if err != nil {
+		t.Fatalf("Export with WithDataDirFn: %v", err)
+	}
+
+	// 基底目錄不應有 key.bin（確認 WithDataDirFn 沒有 fallback 到基底目錄）
+	baseDir := filepath.Join(tmp, "go-xwatch")
+	if _, statErr := os.Stat(filepath.Join(baseDir, "key.bin")); !os.IsNotExist(statErr) {
+		t.Error("key.bin 不應出現在基底目錄（WithDataDirFn 已指定後綴目錄）")
+	}
+
+	data, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "report.csv") {
+		t.Errorf("輸出應包含 report.csv 記錄：%s", string(data))
+	}
+}
+
 func assertFileHasLines(t *testing.T, path string, wantLines int, wantSubs []string) {
 	t.Helper()
 	f, err := os.Open(path)

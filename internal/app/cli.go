@@ -18,6 +18,7 @@ import (
 	"go-xwatch/internal/filecheckcmd"
 	"go-xwatch/internal/heartbeatcmd"
 	"go-xwatch/internal/mailcmd"
+	"go-xwatch/internal/paths"
 	"go-xwatch/internal/service"
 )
 
@@ -292,7 +293,11 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 		if err := fs.Parse(args); err != nil {
 			return err
 		}
-		return exporter.Export(*sinceFlag, *untilFlag, *limitFlag, *formatFlag, *allFlag, *bomFlag, *outFlag)
+		return exporter.Export(*sinceFlag, *untilFlag, *limitFlag, *formatFlag, *allFlag, *bomFlag, *outFlag,
+			exporter.WithDataDirFn(func() (string, error) {
+				return paths.EnsureDataDirForSuffix(service.SuffixFromServiceName(c.serviceName))
+			}),
+		)
 	}})
 
 	// 以 ServiceAwareRunner 介面統一處理「特定子指令需服務已安裝」的前置檢查。

@@ -69,6 +69,8 @@ func RenderWithDay(template string, day string, fallback string) string {
 }
 
 // ResolveLogDir 將 path 轉為絕對路徑；若 path 為空，回傳預設 xwatch-watch-logs 目錄。
+// 注意：空路徑時會隱式呼叫 paths.DataDir()（無後綴基底目錄）。
+// 已知正確 dataDir 時，建議改用 ResolveLogDirForDataDir 以明確語意。
 func ResolveLogDir(path string) string {
 	if strings.TrimSpace(path) == "" {
 		dataDir, err := paths.DataDir()
@@ -78,6 +80,19 @@ func ResolveLogDir(path string) string {
 		return filepath.Join(dataDir, "xwatch-watch-logs")
 	}
 	return MakeAbsPath(path)
+}
+
+// ResolveLogDirForDataDir 將 configPath 轉為絕對路徑；
+// 若 configPath 為空，以 dataDir 作為基底回傳預設 xwatch-watch-logs 目錄。
+// 適用於呼叫端已持有正確後綴子目錄的情境，避免隱式使用全域 paths.DataDir()。
+func ResolveLogDirForDataDir(configPath, dataDir string) string {
+	if strings.TrimSpace(configPath) == "" {
+		if dataDir == "" {
+			return ""
+		}
+		return filepath.Join(dataDir, "xwatch-watch-logs")
+	}
+	return MakeAbsPath(configPath)
 }
 
 // MakeAbsPath 將相對路徑轉為絕對路徑，失敗時回傳原路徑。

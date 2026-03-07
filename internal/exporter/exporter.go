@@ -20,6 +20,7 @@ type options struct {
 	stdout     io.Writer
 	stderr     io.Writer
 	createFile func(string) (io.WriteCloser, error)
+	dataDirFn  func() (string, error)
 }
 
 type Option func(*options)
@@ -29,6 +30,12 @@ func WithStdout(w io.Writer) Option      { return func(o *options) { o.stdout = 
 func WithStderr(w io.Writer) Option      { return func(o *options) { o.stderr = w } }
 func WithCreateFile(fn func(string) (io.WriteCloser, error)) Option {
 	return func(o *options) { o.createFile = fn }
+}
+
+// WithDataDirFn 注入資料目錄取得函式，使 Export 讀取指定後綴子目錄的 key.bin 與 journal.db。
+// 未設定時退化為 paths.EnsureDataDir()（無後綴基底目錄，向後相容）。
+func WithDataDirFn(fn func() (string, error)) Option {
+	return func(o *options) { o.dataDirFn = fn }
 }
 
 func defaultOptions() options {
@@ -47,7 +54,11 @@ func Export(sinceStr, untilStr string, limit int, format string, all, bom bool, 
 		opt(&optsState)
 	}
 
-	dataDir, err := paths.EnsureDataDir()
+	dataDirFn := optsState.dataDirFn
+	if dataDirFn == nil {
+		dataDirFn = paths.EnsureDataDir
+	}
+	dataDir, err := dataDirFn()
 	if err != nil {
 		return err
 	}
