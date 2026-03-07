@@ -85,13 +85,15 @@ func (c *cliApp) initAndExit(rootArg string, installService bool) error {
 			return err
 		}
 
-		// 傳入 --service --name <serviceName> 讓服務模式能正確解析自身名稱。
-		if err := service.InstallOrUpdate(newServiceName, exePath, "--service", "--name", newServiceName); err != nil {
-			return fmt.Errorf("無法註冊服務: %w", err)
-		}
-
-		if err := service.Start(newServiceName); err != nil && !errors.Is(err, service.ErrAlreadyRunning) {
-			return fmt.Errorf("無法啟動服務: %w", err)
+		// XWATCH_SKIP_SERVICE_OPS=1 略過 SCM 呼叫（供整合測試使用，與 stopAndUninstall 一致）。
+		if os.Getenv("XWATCH_SKIP_SERVICE_OPS") != "1" {
+			// 傳入 --service --name <serviceName> 讓服務模式能正確解析自身名稱。
+			if err := service.InstallOrUpdate(newServiceName, exePath, "--service", "--name", newServiceName); err != nil {
+				return fmt.Errorf("無法註冊服務: %w", err)
+			}
+			if err := service.Start(newServiceName); err != nil && !errors.Is(err, service.ErrAlreadyRunning) {
+				return fmt.Errorf("無法啟動服務: %w", err)
+			}
 		}
 	} else {
 		if c.isServiceInstalled() {
@@ -623,32 +625,101 @@ func (c *cliApp) confirmReinstall(svcName string) (bool, error) {
 	return false, nil
 }
 
-// checkVersionConsistency 在 CLI 啟動時檢查目前執行檔版本是否與服務安裝版本一致。
-// 若服務尚未安裝、設定檔不存在、或未記錄安裝版本，則跳過檢查（静默通過）。
-// 版本不一致時回傳含明確提示的錯誤，供呼叫端輸出後終止程式。
-func (c *cliApp) checkVersionConsistency() error {
+// checkVersionConsistency 在 CLI 啟動時比對目前執行檔版本與服務安裝版本，回傳結構化結果。
+// 若服務尚未安裝、設定檔不存在、或未記錄安裝版本，回傳 VersionMatch（靜默通過）。
+// 偵測到不一致時設置 Kind 欄位為對應方向，供呼叫端決策升級或降版阻擋邏輯。
+func (c *cliApp) checkVersionConsistency() VersionCheckResult {
 	if !c.isServiceInstalled() {
-		return nil // 服務未安裝，無需檢查
+		return VersionCheckResult{Kind: VersionMatch}
 	}
 	settings, err := config.Load()
 	if err != nil {
-		return nil // 設定不存在或無法讀取，跳過
+		return VersionCheckResult{Kind: VersionMatch}
 	}
 	installed := strings.TrimSpace(settings.InstalledVersion)
 	if installed == "" {
-		return nil // 舊版安裝未記錄版本，向後相容
+		return VersionCheckResult{Kind: VersionMatch}
 	}
 	current := strings.TrimSpace(c.version)
-	if current == installed {
-		return nil // 版本一致，正常
+	cmp := compareVersions(current, installed)
+	if cmp == 0 {
+		return VersionCheckResult{Kind: VersionMatch}
 	}
-	return fmt.Errorf(
-		"版本不一致\n"+
-			"目前執行檔版本：%s\n"+
-			"服務安裝版本：%s\n"+
-			"請改用正確版本（%s）的主程式執行，或重新執行 `init --install-service` 將服務更新至目前版本。",
-		current, installed, installed,
-	)
+	kind := VersionMismatchCurrentOlder
+	if cmp > 0 {
+		kind = VersionMismatchCurrentNewer
+	}
+	return VersionCheckResult{
+		Kind:      kind,
+		Current:   current,
+		Installed: installed,
+		RootDir:   settings.RootDir,
+	}
+}
+
+// handleVersionMismatch 依版本差異類型採取對應措施：
+//
+//   - VersionMismatchCurrentOlder：顯示警告並等待 Enter（不自動退出），回傳 error 讓呼叫端退出。
+//   - VersionMismatchCurrentNewer：詢問是否升級（預設 N）；
+//     確認後依序執行 remove → init --install-service，回傳 nil 繼續主程式；
+//     拒絕升級則顯示提示、等待 Enter 並回傳 error。
+func (c *cliApp) handleVersionMismatch(result VersionCheckResult) error {
+	switch result.Kind {
+	case VersionMismatchCurrentOlder:
+		fmt.Fprintln(os.Stderr, "\n⚠  警告：版本不一致（降版限制）")
+		fmt.Fprintf(os.Stderr, "目前執行檔版本：%s\n", result.Current)
+		fmt.Fprintf(os.Stderr, "服務安裝版本：%s（較新）\n", result.Installed)
+		fmt.Fprintln(os.Stderr, "此為舊版執行檔，不支援覆蓋較新版本的服務設定。")
+		fmt.Fprintf(os.Stderr, "請改用版本 %s 的主程式，或以新版主程式執行 init --install-service 重新安裝服務。\n", result.Installed)
+		c.logOp("cli exit", "code", 1, "reason", "version_downgrade_blocked", "current", result.Current, "installed", result.Installed)
+		c.waitForEnter()
+		return fmt.Errorf("降版受阻：目前 %s < 安裝 %s", result.Current, result.Installed)
+
+	case VersionMismatchCurrentNewer:
+		fmt.Fprintln(os.Stderr, "\n⚠  注意：版本不一致（可升級）")
+		fmt.Fprintf(os.Stderr, "目前執行檔版本：%s（較新）\n", result.Current)
+		fmt.Fprintf(os.Stderr, "服務安裝版本：%s\n", result.Installed)
+
+		if !c.confirmUpgrade("是否自動移除舊版服務並重新安裝至目前版本？(N/y): ") {
+			fmt.Fprintln(os.Stderr, "已取消升級。請手動執行 remove 後重新執行 init --install-service，或改用正確版本的主程式。")
+			c.logOp("cli exit", "code", 1, "reason", "version_upgrade_declined", "current", result.Current, "installed", result.Installed)
+			c.waitForEnter()
+			return fmt.Errorf("使用者取消版本升級")
+		}
+
+		fmt.Println("\n--- 移除舊版服務 ---")
+		if err := c.stopAndUninstall(); err != nil {
+			return fmt.Errorf("移除服務失敗: %w", err)
+		}
+
+		fmt.Println("\n--- 安裝新版服務 ---")
+		if err := c.initAndExit(result.RootDir, true); err != nil {
+			return fmt.Errorf("安裝服務失敗: %w", err)
+		}
+
+		fmt.Println("升級完成，繼續執行主程式...")
+	}
+	return nil
+}
+
+// confirmUpgrade 顯示升級確認提示（預設 N，需明確輸入 y 才執行）。
+// 可透過 cliApp.confirmUpgradeFn 注入自訂行為（供測試使用）；
+// nil 時使用 askYesNoDefaultNo（非互動環境預設回傳 false）。
+func (c *cliApp) confirmUpgrade(prompt string) bool {
+	if c.confirmUpgradeFn != nil {
+		return c.confirmUpgradeFn(prompt)
+	}
+	return askYesNoDefaultNo(prompt)
+}
+
+// waitForEnter 顯示提示並等待使用者按 Enter 鍵，供警告畫面使用（防止視窗自動關閉）。
+// 非互動環境或 XWATCH_NO_PAUSE=1 時直接返回，不阻塞。
+func (c *cliApp) waitForEnter() {
+	if os.Getenv("XWATCH_NO_PAUSE") == "1" || !isInteractiveConsole() {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "按 Enter 鍵關閉視窗...")
+	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
 }
 
 // isServiceMissing 判斷錯誤是否代表 Windows 服務不存在。

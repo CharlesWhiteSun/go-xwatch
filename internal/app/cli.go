@@ -54,6 +54,10 @@ type cliApp struct {
 	// registeredExePathFn 用於查詢服務已登錄的執行檔路徑，便於測試注入。
 	// nil 時使用 service.RegisteredExePath。
 	registeredExePathFn func(name string) (string, error)
+
+	// confirmUpgradeFn 用於版本升級確認的使用者互動，便於測試注入。
+	// nil 時使用 askYesNoDefaultNo（非互動環境預設回傳 false）。
+	confirmUpgradeFn func(prompt string) bool
 }
 
 func (c *cliApp) run() int {
@@ -83,12 +87,15 @@ func (c *cliApp) run() int {
 		return 0
 	}
 
-	// 期始版本一致性檢查：确保執行檔版本與服務安裝版本相符
-	if err := c.checkVersionConsistency(); err != nil {
-		fmt.Fprintln(os.Stderr, "⚠  錯誤："+err.Error())
-		c.logOp("cli exit", "code", 1, "reason", "version_mismatch", "current", c.version)
-		time.Sleep(3 * time.Second)
-		return 1
+	// 啟動版本一致性檢查：依版本高低採取不同應對措施。
+	// - VersionMismatchCurrentOlder：顯示警告並等待 Enter，不自動退出。
+	// - VersionMismatchCurrentNewer：詢問 (N/y) 否執行 remove + init --install-service。
+	if result := c.checkVersionConsistency(); result.Kind != VersionMatch {
+		if err := c.handleVersionMismatch(result); err != nil {
+			c.logOp("cli exit", "code", 1, "reason", "version_mismatch", "current", c.version)
+			return 1
+		}
+		// handleVersionMismatch 回傳 nil 表示升級成功，繼續主程式流程。
 	}
 
 	exitCode := 0
