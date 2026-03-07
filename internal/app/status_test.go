@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"go-xwatch/internal/config"
+	"go-xwatch/internal/service"
 )
 
 // ── printStatus 停止狀態提示測試 ─────────────────────────────────────
@@ -119,5 +120,92 @@ func TestPrintStatus_ServiceMissing_ReturnsError(t *testing.T) {
 	err := app.printStatus()
 	if err == nil {
 		t.Error("服務不存在時 printStatus 應回傳錯誤，但得到 nil")
+	}
+}
+
+// ── 資料目錄隔離測試 ─────────────────────────────────────────────────
+
+// TestPrintStatus_UsesServiceSuffixDataDir 確認 printStatus 使用含後綴的資料目錄，
+// 而非基底目錄（%ProgramData%\go-xwatch）。
+func TestPrintStatus_UsesServiceSuffixDataDir(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	const svcName = "GoXWatch-abc123"
+	expectedSuffix := service.SuffixFromServiceName(svcName) // "abc123"
+
+	app := &cliApp{
+		serviceName:     svcName,
+		serviceStatusFn: func(_ string) (string, error) { return "stopped", nil },
+	}
+
+	captureStdout(func() { _ = app.printStatus() })
+
+	// key.bin 與 journal.db 應出現在後綴子目錄，不得出現在基底目錄。
+	baseDir := filepath.Join(tmp, "go-xwatch")
+	suffixDir := filepath.Join(baseDir, expectedSuffix)
+
+	if _, err := os.Stat(filepath.Join(baseDir, "key.bin")); !os.IsNotExist(err) {
+		t.Error("key.bin 不應出現在基底目錄 %ProgramData%\\go-xwatch")
+	}
+	if _, err := os.Stat(filepath.Join(baseDir, "journal.db")); !os.IsNotExist(err) {
+		t.Error("journal.db 不應出現在基底目錄 %ProgramData%\\go-xwatch")
+	}
+	if _, err := os.Stat(filepath.Join(suffixDir, "key.bin")); os.IsNotExist(err) {
+		t.Errorf("key.bin 應出現在後綴目錄 %s", suffixDir)
+	}
+}
+
+// TestClearJournal_UsesServiceSuffixDataDir 確認 clearJournal 使用含後綴的資料目錄，
+// key.bin 與 journal.db 不得建立在基底目錄。
+func TestClearJournal_UsesServiceSuffixDataDir(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	t.Setenv("XWATCH_SKIP_SERVICE_OPS", "1")
+
+	const svcName = "GoXWatch-abc123"
+	expectedSuffix := service.SuffixFromServiceName(svcName) // "abc123"
+
+	app := &cliApp{serviceName: svcName}
+
+	captureStdout(func() { _ = app.clearJournal() })
+
+	baseDir := filepath.Join(tmp, "go-xwatch")
+	suffixDir := filepath.Join(baseDir, expectedSuffix)
+
+	if _, err := os.Stat(filepath.Join(baseDir, "key.bin")); !os.IsNotExist(err) {
+		t.Error("key.bin 不應出現在基底目錄 %ProgramData%\\go-xwatch")
+	}
+	if _, err := os.Stat(filepath.Join(baseDir, "journal.db")); !os.IsNotExist(err) {
+		t.Error("journal.db 不應出現在基底目錄 %ProgramData%\\go-xwatch")
+	}
+	if _, err := os.Stat(filepath.Join(suffixDir, "key.bin")); os.IsNotExist(err) {
+		t.Errorf("key.bin 應出現在後綴目錄 %s", suffixDir)
+	}
+	if _, err := os.Stat(filepath.Join(suffixDir, "journal.db")); os.IsNotExist(err) {
+		t.Errorf("journal.db 應出現在後綴目錄 %s", suffixDir)
+	}
+}
+
+// TestPrintStatus_DataDirContainsSuffix 確認 printStatus 輸出的 data dir 路徑包含服務後綴子目錄。
+func TestPrintStatus_DataDirContainsSuffix(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	const svcName = "GoXWatch-myinst"
+	expectedSuffix := service.SuffixFromServiceName(svcName) // "myinst"
+
+	app := &cliApp{
+		serviceName:     svcName,
+		serviceStatusFn: func(_ string) (string, error) { return "running", nil },
+	}
+
+	output := captureStdout(func() { _ = app.printStatus() })
+
+	if !strings.Contains(output, expectedSuffix) {
+		t.Errorf("printStatus 輸出的 data dir 應包含後綴 %q，實際輸出：\n%s", expectedSuffix, output)
 	}
 }

@@ -149,7 +149,7 @@ func (c *cliApp) printStatus() error {
 		fmt.Println("root: (讀取設定失敗)")
 	}
 
-	dataDir, derr := paths.EnsureDataDir()
+	dataDir, derr := paths.EnsureDataDirForSuffix(service.SuffixFromServiceName(c.serviceName))
 	if derr == nil {
 		fmt.Println("data dir:", dataDir)
 		journalPath := filepath.Join(dataDir, "journal.db")
@@ -444,7 +444,7 @@ func (c *cliApp) clearJournal() error {
 		}
 	}
 
-	dataDir, err := paths.EnsureDataDir()
+	dataDir, err := paths.EnsureDataDirForSuffix(service.SuffixFromServiceName(c.serviceName))
 	if err != nil {
 		return err
 	}
