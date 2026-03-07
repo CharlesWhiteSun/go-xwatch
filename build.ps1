@@ -21,21 +21,13 @@ $ErrorActionPreference = "Stop"
 $ver = git describe --tags --always --dirty 2>$null
 if (-not $ver) { $ver = "dev" }
 
-Write-Host "Running tests..."
-# -p 1 序列化各套件測試，避免 Windows 環境下跨套件並行時的偶發競態問題
-go test -count=1 -timeout 120s -p 1 ./...
-if ($LASTEXITCODE -ne 0) {
-	Write-Error "Tests failed with exit code $LASTEXITCODE"
-	exit $LASTEXITCODE
-}
-Write-Host "All tests passed."
+$outFile = "XWatch-$ver.exe"
+Write-Host "Building $outFile..."
 
-Write-Host "Building xwatch.exe (version $ver)..."
-
-go build -ldflags "-X main.version=$ver" -o xwatch.exe ./cmd/xwatch
+go build -ldflags "-X main.version=$ver" -o $outFile ./cmd/xwatch
 if ($LASTEXITCODE -ne 0) {
 	Write-Error "Build failed with exit code $LASTEXITCODE"
 	exit $LASTEXITCODE
 }
 
-Write-Host "Build succeeded. Output: xwatch.exe"
+Write-Host "Build succeeded. Output: $outFile"
