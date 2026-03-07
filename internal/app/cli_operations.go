@@ -208,6 +208,36 @@ func buildRemoveFeatures() []removeFeature {
 	}
 }
 
+// ssFeature 描述一個 CLI 功能在 start/stop 流程中的狀態查詢。
+// 資料驅動設計：新增功能只需在 buildStartStopFeatures 加一筆記錄。
+type ssFeature struct {
+	CmdName   string                       // CLI 指令名稱，供 ops-log 記錄
+	Title     string                       // 使用者友善顯示名稱
+	IsEnabled func(s config.Settings) bool // 判斷此功能是否已啟用
+}
+
+// buildStartStopFeatures 回傳所有 CLI 功能的 start/stop 聯動描述。
+// 與 buildRemoveFeatures 並列，共同覆蓋各功能的完整生命週期管理。
+func buildStartStopFeatures() []ssFeature {
+	return []ssFeature{
+		{
+			CmdName:   "heartbeat",
+			Title:     "heartbeat 心跳排程",
+			IsEnabled: func(s config.Settings) bool { return s.HeartbeatEnabled },
+		},
+		{
+			CmdName:   "mail",
+			Title:     "mail 郵件排程",
+			IsEnabled: func(s config.Settings) bool { return s.Mail.Enabled != nil && *s.Mail.Enabled },
+		},
+		{
+			CmdName:   "filecheck",
+			Title:     "filecheck 目錄排程",
+			IsEnabled: func(s config.Settings) bool { return s.Filecheck.Enabled },
+		},
+	}
+}
+
 // stopAndUninstall 停止並移除 Windows 服務，同時停用所有功能並刪除設定檔。
 //
 // 步驟數由 buildRemoveFeatures 自動計算（目前共 8 步）：
@@ -294,6 +324,90 @@ func (c *cliApp) stopAndUninstall() error {
 	}
 
 	fmt.Println("所有服務、排程已停止並移除。")
+	return nil
+}
+
+// stopService 停止 Windows 服務，並逐一顯示各 CLI 功能的聯動停止狀態。
+//
+// 步驟數由 buildStartStopFeatures 自動計算：
+//
+//	[1/N]       停止 Windows 服務
+//	[2/N]~[N/N] 顯示各 CLI 功能的聯動停止狀態
+//
+// 設定環境變數 XWATCH_SKIP_SERVICE_OPS=1 可略過 SCM 呼叫（供測試使用）。
+func (c *cliApp) stopService() error {
+	features := buildStartStopFeatures()
+	total := 1 + len(features)
+	step := 0
+	next := func() int { step++; return step }
+
+	// 載入設定（盡力嘗試，以判斷哪些功能已啟用）
+	settings, loadErr := config.Load()
+	hasConfig := loadErr == nil
+
+	// [1/N] 停止 Windows 服務
+	if os.Getenv("XWATCH_SKIP_SERVICE_OPS") != "1" {
+		if err := service.Stop(c.serviceName); err != nil && !isServiceMissing(err) && !errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
+			return fmt.Errorf("無法停止服務: %w", err)
+		}
+	}
+	c.logOp("stop", "step", "XWatch 服務已停止")
+	fmt.Printf("[%d/%d] XWatch 服務已停止。\n", next(), total)
+
+	// [2/N]~[N/N] 顯示各 CLI 功能的聯動停止狀態
+	for _, f := range features {
+		n := next()
+		if hasConfig && f.IsEnabled(settings) {
+			c.logOp("stop", "step", f.CmdName+": 已隨服務停止")
+			fmt.Printf("[%d/%d] %s：已隨服務停止。\n", n, total, f.Title)
+		} else {
+			c.logOp("stop", "step", f.CmdName+": 未啟用，略過")
+			fmt.Printf("[%d/%d] %s：未啟用，略過。\n", n, total, f.Title)
+		}
+	}
+	fmt.Println("服務及所有聯動功能已停止。")
+	return nil
+}
+
+// startService 啟動 Windows 服務，並逐一顯示各 CLI 功能的聯動啟動狀態。
+//
+// 步驟數由 buildStartStopFeatures 自動計算：
+//
+//	[1/N]       啟動 Windows 服務
+//	[2/N]~[N/N] 顯示各 CLI 功能的聯動啟動狀態
+//
+// 設定環境變數 XWATCH_SKIP_SERVICE_OPS=1 可略過 SCM 呼叫（供測試使用）。
+func (c *cliApp) startService() error {
+	features := buildStartStopFeatures()
+	total := 1 + len(features)
+	step := 0
+	next := func() int { step++; return step }
+
+	// [1/N] 啟動 Windows 服務
+	if os.Getenv("XWATCH_SKIP_SERVICE_OPS") != "1" {
+		if err := service.Start(c.serviceName); err != nil {
+			return err
+		}
+	}
+	c.logOp("start", "step", "XWatch 服務已啟動")
+	fmt.Printf("[%d/%d] XWatch 服務已啟動。\n", next(), total)
+
+	// 載入設定（在服務啟動後，顯示實際將運行的功能清單）
+	settings, loadErr := config.Load()
+	hasConfig := loadErr == nil
+
+	// [2/N]~[N/N] 顯示各 CLI 功能的聯動啟動狀態
+	for _, f := range features {
+		n := next()
+		if hasConfig && f.IsEnabled(settings) {
+			c.logOp("start", "step", f.CmdName+": 已隨服務啟動")
+			fmt.Printf("[%d/%d] %s：已隨服務啟動。\n", n, total, f.Title)
+		} else {
+			c.logOp("start", "step", f.CmdName+": 未啟用，略過")
+			fmt.Printf("[%d/%d] %s：未啟用，略過。\n", n, total, f.Title)
+		}
+	}
+	fmt.Println("服務及所有聯動功能已啟動。")
 	return nil
 }
 

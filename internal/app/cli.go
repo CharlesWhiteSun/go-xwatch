@@ -218,19 +218,11 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 	}})
 
 	reg.Register(cli.CommandFunc{CommandName: "start", Fn: func(_ []string) error {
-		if err := service.Start(c.serviceName); err != nil {
-			return err
-		}
-		fmt.Println("服務已啟動。")
-		return nil
+		return c.startService()
 	}})
 
 	reg.Register(cli.CommandFunc{CommandName: "stop", Fn: func(_ []string) error {
-		if err := service.Stop(c.serviceName); err != nil {
-			return err
-		}
-		fmt.Println("服務已停止。")
-		return nil
+		return c.stopService()
 	}})
 
 	reg.Register(cli.CommandFunc{CommandName: "remove", Fn: func(_ []string) error {
