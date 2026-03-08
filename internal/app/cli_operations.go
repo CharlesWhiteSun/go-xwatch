@@ -662,7 +662,7 @@ func (c *cliApp) checkVersionConsistency() VersionCheckResult {
 //   - VersionMismatchCurrentOlder：顯示警告並等待 Enter（不自動退出），回傳 error 讓呼叫端退出。
 //   - VersionMismatchCurrentNewer：詢問是否升級（預設 N）；
 //     確認後依序執行 remove → init --install-service，回傳 nil 繼續主程式；
-//     拒絕升級則顯示提示、等待 Enter 並回傳 error。
+//     拒絕升級則詢問「退出(E)或返回(r)」：選擇 r 返回重新詢問升級，Enter/E 則回傳 error 退出。
 func (c *cliApp) handleVersionMismatch(result VersionCheckResult) error {
 	switch result.Kind {
 	case VersionMismatchCurrentOlder:
@@ -680,24 +680,28 @@ func (c *cliApp) handleVersionMismatch(result VersionCheckResult) error {
 		fmt.Fprintf(os.Stderr, "目前執行檔版本：%s（較新）\n", result.Current)
 		fmt.Fprintf(os.Stderr, "服務安裝版本：%s\n", result.Installed)
 
-		if !c.confirmUpgrade("是否自動移除舊版服務並重新安裝至目前版本？(N/y): ") {
-			fmt.Fprintln(os.Stderr, "已取消升級。請手動執行 remove 後重新執行 init --install-service，或改用正確版本的主程式。")
-			c.logOp("cli exit", "code", 1, "reason", "version_upgrade_declined", "current", result.Current, "installed", result.Installed)
-			c.waitForEnter()
-			return fmt.Errorf("使用者取消版本升級")
-		}
+		for {
+			if !c.confirmUpgrade("\n是否自動移除舊版服務並重新安裝至目前版本？(N/y): ") {
+				if c.confirmAfterDecline("您已取消升級版本，接下來您是要退出(E)或是返回(r)詢問升級的對話呢? (E/r): ") {
+					continue
+				}
+				c.logOp("cli exit", "code", 1, "reason", "version_upgrade_declined", "current", result.Current, "installed", result.Installed)
+				return fmt.Errorf("使用者取消版本升級")
+			}
 
-		fmt.Println("\n--- 移除舊版服務 ---")
-		if err := c.stopAndUninstall(); err != nil {
-			return fmt.Errorf("移除服務失敗: %w", err)
-		}
+			fmt.Println("\n--- 移除舊版服務 ---")
+			if err := c.stopAndUninstall(); err != nil {
+				return fmt.Errorf("移除服務失敗: %w", err)
+			}
 
-		fmt.Println("\n--- 安裝新版服務 ---")
-		if err := c.initAndExit(result.RootDir, true); err != nil {
-			return fmt.Errorf("安裝服務失敗: %w", err)
-		}
+			fmt.Println("\n--- 安裝新版服務 ---")
+			if err := c.initAndExit(result.RootDir, true); err != nil {
+				return fmt.Errorf("安裝服務失敗: %w", err)
+			}
 
-		fmt.Println("升級完成，繼續執行主程式...")
+			fmt.Println("升級完成，繼續執行主程式...")
+			return nil
+		}
 	}
 	return nil
 }
@@ -710,6 +714,30 @@ func (c *cliApp) confirmUpgrade(prompt string) bool {
 		return c.confirmUpgradeFn(prompt)
 	}
 	return askYesNoDefaultNo(prompt)
+}
+
+// confirmAfterDecline 顯示取消升級後「退出或返回」詢問。
+// 回傳 true 表示使用者選擇返回重試升級詢問；false 表示退出。
+// 可透過 cliApp.afterDeclineFn 注入自訂行為（供測試使用）；
+// nil 時使用 askExitOrRetry（非互動環境預設退出）。
+func (c *cliApp) confirmAfterDecline(prompt string) bool {
+	if c.afterDeclineFn != nil {
+		return c.afterDeclineFn(prompt)
+	}
+	return askExitOrRetry(prompt)
+}
+
+// askExitOrRetry 顯示退出或返回提示；輸入 r/R 回傳 true（返回重試）；
+// 空白/Enter 或其他輸入回傳 false（退出）。
+// 非互動環境或 XWATCH_NO_PAUSE=1 時直接回傳 false（預設退出）。
+func askExitOrRetry(prompt string) bool {
+	if os.Getenv("XWATCH_NO_PAUSE") == "1" || !isInteractiveConsole() {
+		return false
+	}
+	fmt.Fprint(os.Stderr, prompt)
+	reader := bufio.NewReader(os.Stdin)
+	line, _ := reader.ReadString('\n')
+	return strings.ToLower(strings.TrimSpace(line)) == "r"
 }
 
 // waitForEnter 顯示提示並等待使用者按 Enter 鍵，供警告畫面使用（防止視窗自動關閉）。

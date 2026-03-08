@@ -303,7 +303,8 @@ func TestHandleVersionMismatch_NewerVersion_DeclineUpgrade_ReturnsError(t *testi
 }
 
 // TestHandleVersionMismatch_NewerVersion_DeclineUpgrade_PrintsHint
-// 確認拒絕升級時，stderr 含指引手動升級的提示。
+// 確認拒絕升級時，stderr 含版本不一致警告標頭及版本號。
+// （取消升級後改以互動式「退出/返回」替代舊版靜態 remove 文字提示）
 func TestHandleVersionMismatch_NewerVersion_DeclineUpgrade_PrintsHint(t *testing.T) {
 	t.Setenv("XWATCH_NO_PAUSE", "1")
 	app := &cliApp{
@@ -317,17 +318,148 @@ func TestHandleVersionMismatch_NewerVersion_DeclineUpgrade_PrintsHint(t *testing
 	output := captureStderr(func() {
 		_ = app.handleVersionMismatch(result)
 	})
-	if !strings.Contains(output, "升級") {
-		t.Errorf("拒絕升級內容應含「升級」字樣，實際：%q", output)
+	if !strings.Contains(output, "版本不一致") {
+		t.Errorf("拒絕升級內容應含「版本不一致」字樣，實際：%q", output)
 	}
-	if !strings.Contains(output, "remove") {
-		t.Errorf("拒絕升級內容應含手動執行 remove 的提示，實際：%q", output)
+	if !strings.Contains(output, "v2.0") {
+		t.Errorf("拒絕升級內容應含目前版本 v2.0，實際：%q", output)
+	}
+	if !strings.Contains(output, "v1.0") {
+		t.Errorf("拒絕升級內容應含安裝版本 v1.0，實際：%q", output)
+	}
+}
+
+// ── handleVersionMismatch 退出/返回迴圈測試 ─────────────────────────────
+
+// TestHandleVersionMismatch_AfterDecline_PromptContainsExitOrRetry
+// 確認取消升級後，afterDeclineFn 收到的提示文字包含「退出」與「返回」關鍵字。
+func TestHandleVersionMismatch_AfterDecline_PromptContainsExitOrRetry(t *testing.T) {
+	t.Setenv("XWATCH_NO_PAUSE", "1")
+	var capturedPrompt string
+	app := &cliApp{
+		confirmUpgradeFn: func(_ string) bool { return false },
+		afterDeclineFn: func(prompt string) bool {
+			capturedPrompt = prompt
+			return false // 選擇退出
+		},
+	}
+	result := VersionCheckResult{
+		Kind:      VersionMismatchCurrentNewer,
+		Current:   "v2.0",
+		Installed: "v1.0",
+	}
+	_ = app.handleVersionMismatch(result)
+	if !strings.Contains(capturedPrompt, "退出") {
+		t.Errorf("取消升級後的提示應含「退出」字樣，實際：%q", capturedPrompt)
+	}
+	if !strings.Contains(capturedPrompt, "返回") {
+		t.Errorf("取消升級後的提示應含「返回」字樣，實際：%q", capturedPrompt)
+	}
+}
+
+// TestHandleVersionMismatch_NewerVersion_DeclineRetryThenExit
+// 確認使用者拒絕升級 → 選擇返回 → 再次拒絕 → 選擇退出，回傳 error，且兩輪皆被呼叫。
+func TestHandleVersionMismatch_NewerVersion_DeclineRetryThenExit(t *testing.T) {
+	t.Setenv("XWATCH_NO_PAUSE", "1")
+	upgradeCallCount := 0
+	retryCallCount := 0
+	app := &cliApp{
+		confirmUpgradeFn: func(_ string) bool {
+			upgradeCallCount++
+			return false // 每次都拒絕
+		},
+		afterDeclineFn: func(_ string) bool {
+			retryCallCount++
+			return retryCallCount < 2 // 第一次返回重試，第二次選擇退出
+		},
+	}
+	result := VersionCheckResult{
+		Kind:      VersionMismatchCurrentNewer,
+		Current:   "v2.0",
+		Installed: "v1.0",
+	}
+	if err := app.handleVersionMismatch(result); err == nil {
+		t.Error("最終選擇退出時應回傳 error，但得到 nil")
+	}
+	if upgradeCallCount != 2 {
+		t.Errorf("confirmUpgradeFn 應被呼叫 2 次（兩輪拒絕），實際：%d", upgradeCallCount)
+	}
+	if retryCallCount != 2 {
+		t.Errorf("afterDeclineFn 應被呼叫 2 次（一返回一退出），實際：%d", retryCallCount)
+	}
+}
+
+// TestHandleVersionMismatch_NewerVersion_DeclineRetryThenConfirm
+// 確認使用者拒絕升級 → 選擇返回 → 第二次確認升級，流程成功。
+// 使用 XWATCH_SKIP_SERVICE_OPS=1 略過 Windows SCM 呼叫。
+func TestHandleVersionMismatch_NewerVersion_DeclineRetryThenConfirm(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+	t.Setenv("XWATCH_SKIP_SERVICE_OPS", "1")
+	t.Setenv("XWATCH_NO_PAUSE", "1")
+	defer config.ResetServiceSuffix()
+
+	rootDir := filepath.Join(tmp, "plant-R")
+	if err := os.MkdirAll(rootDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config.SetServiceSuffix("plant-R")
+	if err := config.Save(config.Settings{
+		RootDir:          rootDir,
+		InstalledVersion: "v1.0",
+		ServiceName:      "GoXWatch-plant-R",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	upgradeCallCount := 0
+	app := &cliApp{
+		serviceName: "GoXWatch-plant-R",
+		version:     "v2.0",
+		confirmUpgradeFn: func(_ string) bool {
+			upgradeCallCount++
+			return upgradeCallCount >= 2 // 第一次拒絕，第二次確認
+		},
+		afterDeclineFn:     func(_ string) bool { return true }, // 選擇返回
+		serviceInstalledFn: func(_ string) bool { return false },
+		serviceStatusFn:    func(_ string) (string, error) { return "", nil },
+	}
+
+	result := VersionCheckResult{
+		Kind:      VersionMismatchCurrentNewer,
+		Current:   "v2.0",
+		Installed: "v1.0",
+		RootDir:   rootDir,
+	}
+	if err := app.handleVersionMismatch(result); err != nil {
+		t.Fatalf("重試後確認升級應成功，但得到錯誤：%v", err)
+	}
+	if upgradeCallCount != 2 {
+		t.Errorf("confirmUpgradeFn 應被呼叫 2 次（一拒絕一確認），實際：%d", upgradeCallCount)
+	}
+
+	// 驗證升級後版本已更新至設定檔
+	s, err := config.Load()
+	if err != nil {
+		t.Fatalf("升級後 Load 失敗：%v", err)
+	}
+	if s.InstalledVersion != "v2.0" {
+		t.Errorf("升級後 InstalledVersion 應為 v2.0，實際：%q", s.InstalledVersion)
+	}
+}
+
+// TestAskExitOrRetry_NoPause_ReturnsFalse
+// 確認 XWATCH_NO_PAUSE=1 時 askExitOrRetry 直接回傳 false（預設退出）。
+func TestAskExitOrRetry_NoPause_ReturnsFalse(t *testing.T) {
+	t.Setenv("XWATCH_NO_PAUSE", "1")
+	if askExitOrRetry("任何提示 (E/r): ") {
+		t.Error("XWATCH_NO_PAUSE=1 時 askExitOrRetry 應回傳 false（預設退出）")
 	}
 }
 
 // TestHandleVersionMismatch_NewerVersion_ConfirmUpgrade_Success
 // 確認高版執行檔且使用者確認升級時，完整執行 remove → init --install-service 流程並成功。
-// 使用 XWATCH_SKIP_SERVICE_OPS=1 略過 Windows SCM 呼叫（與 remove_test.go 一致）。
 func TestHandleVersionMismatch_NewerVersion_ConfirmUpgrade_Success(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("ProgramData", tmp)

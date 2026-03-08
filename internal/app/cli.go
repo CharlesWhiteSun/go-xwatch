@@ -58,6 +58,11 @@ type cliApp struct {
 	// confirmUpgradeFn 用於版本升級確認的使用者互動，便於測試注入。
 	// nil 時使用 askYesNoDefaultNo（非互動環境預設回傳 false）。
 	confirmUpgradeFn func(prompt string) bool
+
+	// afterDeclineFn 用於取消升級後「退出或返回」選擇的使用者互動，便於測試注入。
+	// 回傳 true 表示返回重試升級詢問，false 表示退出。
+	// nil 時使用 askExitOrRetry（非互動環境預設退出）。
+	afterDeclineFn func(prompt string) bool
 }
 
 func (c *cliApp) run() int {
