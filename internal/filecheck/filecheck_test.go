@@ -22,6 +22,25 @@ func TestFileDateFormat_IsYYYYMMDD(t *testing.T) {
 	}
 }
 
+//  TargetFileName
+
+func TestTargetFileName_Format(t *testing.T) {
+	got := TargetFileName(fixedDate)
+	want := "laravel-2026-03-04.log"
+	if got != want {
+		t.Errorf("TargetFileName = %q, want %q", got, want)
+	}
+}
+
+func TestTargetFileName_DifferentDate(t *testing.T) {
+	d := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
+	got := TargetFileName(d)
+	want := "laravel-2025-12-31.log"
+	if got != want {
+		t.Errorf("TargetFileName = %q, want %q", got, want)
+	}
+}
+
 //  DefaultScanDir
 
 func TestDefaultScanDir(t *testing.T) {
@@ -97,55 +116,68 @@ func TestScanForDate_NoMatchingFiles(t *testing.T) {
 	}
 }
 
-func TestScanForDate_MatchesDateInYYYYMMDD(t *testing.T) {
+func TestScanForDate_MatchesLaravelLogExactName(t *testing.T) {
 	tmp := t.TempDir()
-	// fixedDate = 2026-03-04，格式化為 YYYY-MM-DD = "2026-03-04"
-	dateStr := fixedDate.Format(FileDateFormat) // "2026-03-04"
+	// fixedDate = 2026-03-04，期望檔名 laravel-2026-03-04.log
+	target := TargetFileName(fixedDate) // "laravel-2026-03-04.log"
 
-	// 建立一個含有 YYYY-MM-DD 格式日期的檔案
-	matchFile := "report_" + dateStr + ".csv"
-	_ = os.WriteFile(filepath.Join(tmp, matchFile), []byte("data"), 0o644)
-	// 不應被比對到的檔案（舊 YYYY-DD-MM 誤誤格式）
-	_ = os.WriteFile(filepath.Join(tmp, "report_2026-04-03.csv"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(tmp, target), []byte("data"), 0o644)
+	// 以下檔案雖含日期但命名不符，不應被比對到
+	_ = os.WriteFile(filepath.Join(tmp, "report_2026-03-04.csv"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(tmp, "2026-03-04.log"), []byte("x"), 0o644)
 	_ = os.WriteFile(filepath.Join(tmp, "other.log"), []byte("x"), 0o644)
 
 	files, err := ScanForDate(tmp, fixedDate)
 	if err != nil {
 		t.Fatalf("不應回傳 error，got %v", err)
 	}
-	if len(files) != 1 || files[0] != matchFile {
-		t.Errorf("應只找到 %q，got %v", matchFile, files)
+	if len(files) != 1 || files[0] != target {
+		t.Errorf("應只找到 %q，got %v", target, files)
 	}
 }
 
-func TestScanForDate_MultipleMatches(t *testing.T) {
+func TestScanForDate_NonLaravelFile_NotMatched(t *testing.T) {
 	tmp := t.TempDir()
-	dateStr := fixedDate.Format(FileDateFormat)
+	dateStr := fixedDate.Format(FileDateFormat) // "2026-03-04"
 
-	names := []string{
-		"a_" + dateStr + ".log",
-		"b_" + dateStr + ".csv",
-		"c_" + dateStr + ".txt",
-	}
-	for _, n := range names {
-		_ = os.WriteFile(filepath.Join(tmp, n), []byte("x"), 0o644)
-	}
+	// 放含日期但不符合 laravel-{date}.log 格式的檔案
+	_ = os.WriteFile(filepath.Join(tmp, "report_"+dateStr+".csv"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(tmp, "app_"+dateStr+".log"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(tmp, dateStr+".log"), []byte("x"), 0o644)
 
 	files, err := ScanForDate(tmp, fixedDate)
 	if err != nil {
 		t.Fatalf("不應回傳 error，got %v", err)
 	}
-	if len(files) != 3 {
-		t.Errorf("應找到 3 個檔案，got %d: %v", len(files), files)
+	if len(files) != 0 {
+		t.Errorf("不符合 laravel-{date}.log 的檔案不應被計入，got %v", files)
+	}
+}
+
+func TestScanForDate_MultipleTargetFiles_OnlyExactMatch(t *testing.T) {
+	tmp := t.TempDir()
+
+	// 只有 laravel-{fixedDate}.log 應被找到
+	target := TargetFileName(fixedDate)
+	_ = os.WriteFile(filepath.Join(tmp, target), []byte("x"), 0o644)
+	// 其他日期的 laravel 檔案不應被找到
+	otherTarget := TargetFileName(time.Date(2026, 3, 3, 0, 0, 0, 0, time.UTC))
+	_ = os.WriteFile(filepath.Join(tmp, otherTarget), []byte("x"), 0o644)
+
+	files, err := ScanForDate(tmp, fixedDate)
+	if err != nil {
+		t.Fatalf("不應回傳 error，got %v", err)
+	}
+	if len(files) != 1 || files[0] != target {
+		t.Errorf("應只找到 %q，got %v", target, files)
 	}
 }
 
 func TestScanForDate_SkipsSubdirectories(t *testing.T) {
 	tmp := t.TempDir()
-	dateStr := fixedDate.Format(FileDateFormat)
 
-	// 在子目錄放符合的「目錄名稱」（不應被計入）
-	subDir := filepath.Join(tmp, "sub_"+dateStr)
+	// 在子目錄放符合命名的「目錄名稱」（不應被計入）
+	subDir := filepath.Join(tmp, TargetFileName(fixedDate))
 	_ = os.Mkdir(subDir, 0o755)
 
 	files, err := ScanForDate(tmp, fixedDate)
@@ -163,7 +195,8 @@ var reportDate = time.Date(2026, 3, 3, 0, 0, 0, 0, time.UTC)
 var reportDir = `D:\root\storage\logs`
 
 func TestBuildMailReport_Found(t *testing.T) {
-	files := []string{"report_2026-03-03.csv", "report_2026-04-03.csv"}
+	target := TargetFileName(reportDate) // "laravel-2026-03-03.log"
+	files := []string{target, "laravel-2026-04-03.log"}
 	subject, body := BuildMailReport(reportDir, files, reportDate, nil)
 
 	// 主旨含顯示日期（YYYY-MM-DD 形式）與狀態
@@ -177,13 +210,16 @@ func TestBuildMailReport_Found(t *testing.T) {
 		t.Errorf("內文應含 [FOUND]，got:\n%s", body)
 	}
 	// 內文應列出檔案名稱
-	if !strings.Contains(body, "report_2026-04-03.csv") {
-		t.Errorf("內文應含搜尋到的檔案名稱，got:\n%s", body)
+	if !strings.Contains(body, target) {
+		t.Errorf("內文應含目標檔案名稱 %q，got:\n%s", target, body)
 	}
-	// 搜尋格式應含 YYYY-MM-DD 格式的日期字串
-	datePattern := reportDate.Format(FileDateFormat)
-	if !strings.Contains(body, datePattern) {
-		t.Errorf("內文應含搜尋日期格式 %q，got:\n%s", datePattern, body)
+	// 內文應顯示目標檔名格式（laravel-{date}.log）
+	if !strings.Contains(body, FileNameTemplate) {
+		t.Errorf("內文應含檔名模板 %q，got:\n%s", FileNameTemplate, body)
+	}
+	// 內文應含本次搜尋的目標檔名
+	if !strings.Contains(body, target) {
+		t.Errorf("內文應含本次搜尋目標 %q，got:\n%s", target, body)
 	}
 }
 

@@ -1,5 +1,5 @@
 ﻿// Package filecheck 提供目錄內檔案存在性排程掃描功能。
-// 在每日排程時間掃描指定目錄，確認是否存在包含前一日日期（YYYY-MM-DD）的檔案，
+// 在每日排程時間掃描指定目錄，確認是否存在前一日對應的 laravel-{YYYY-MM-DD}.log 檔案，
 // 無論結果如何均寄送郵件通知相關人員。
 package filecheck
 
@@ -15,18 +15,28 @@ import (
 // 例如 2026-03-04 會格式化為 "2026-03-04"（標準年-月-日格式）。
 const FileDateFormat = "2006-01-02"
 
-// ScanForDate 掃描 dir 目錄，找出名稱中包含 date（YYYY-MM-DD 格式）字串的檔案。
+// FileNameTemplate 是目標檔案名稱的格式模板，%s 為 YYYY-MM-DD 日期。
+// 例如：laravel-2026-03-04.log
+const FileNameTemplate = "laravel-%s.log"
+
+// TargetFileName 依給定日期回傳預期的目標檔案名稱。
+// 例如：date = 2026-03-04 → "laravel-2026-03-04.log"
+func TargetFileName(date time.Time) string {
+	return fmt.Sprintf(FileNameTemplate, date.Format(FileDateFormat))
+}
+
+// ScanForDate 掃描 dir 目錄，找出名稱符合 laravel-{YYYY-MM-DD}.log 格式的檔案。
 // 若目錄不存在或無法讀取，回傳 nil slice 與 error；
 // 目錄存在但無符合檔案時回傳空 slice 與 nil error。
 func ScanForDate(dir string, date time.Time) ([]string, error) {
-	dateStr := date.Format(FileDateFormat)
+	target := TargetFileName(date)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 	var matched []string
 	for _, e := range entries {
-		if !e.IsDir() && strings.Contains(e.Name(), dateStr) {
+		if !e.IsDir() && e.Name() == target {
 			matched = append(matched, e.Name())
 		}
 	}
@@ -58,7 +68,6 @@ func ResolveScanDir(rootDir, configured string) string {
 // date 為被掃描的前一日日期；datePattern 為在目錄中搜尋的格式（YYYY-MM-DD）。
 func BuildMailReport(scanDir string, files []string, date time.Time, scanErr error) (subject, body string) {
 	dayStr := date.Format("2006-01-02")
-	datePattern := date.Format(FileDateFormat) // YYYY-MM-DD
 
 	var statusLabel string
 	switch {
@@ -75,7 +84,7 @@ func BuildMailReport(scanDir string, files []string, date time.Time, scanErr err
 	sb.WriteString(fmt.Sprintf("前一日（%s）目錄檔案存在性報告\n", dayStr))
 	sb.WriteString(strings.Repeat("=", 56) + "\n\n")
 	sb.WriteString(fmt.Sprintf("掃描目錄：%s\n", scanDir))
-	sb.WriteString(fmt.Sprintf("搜尋格式：YYYY-MM-DD（本次搜尋：%s）\n\n", datePattern))
+	sb.WriteString(fmt.Sprintf("目標檔名：%s（本次搜尋：%s）\n\n", FileNameTemplate, TargetFileName(date)))
 
 	if scanErr != nil {
 		sb.WriteString(fmt.Sprintf("結果：[ERROR] 無法讀取目錄\n  %v\n", scanErr))

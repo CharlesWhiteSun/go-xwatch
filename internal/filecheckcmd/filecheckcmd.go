@@ -1,5 +1,5 @@
 ﻿// Package filecheckcmd 實作 filecheck CLI 子指令。
-// filecheck 在每日排程時間掃描指定目錄，確認是否存在包含前一日日期（YYYY-MM-DD）的檔案，
+// filecheck 在每日排程時間揃描指定目錄，確認是否存在前一日對應的 laravel-{YYYY-MM-DD}.log 檔案，
 // 無論有無皆寄送郵件通知指定人員。
 package filecheckcmd
 
@@ -163,7 +163,7 @@ func looksLikeEmail(s string) bool {
 	return at > 0 && at < len(s)-1 && !strings.ContainsAny(s, " []()<>")
 }
 
-// mailSendWithSender 主動掃描前一日符合 YYYY-MM-DD 格式的檔案，並立即寄送結果報告。
+// mailSendWithSender 主動揃描前一日的 laravel-{YYYY-MM-DD}.log 檔案，並立即寄送結果報告。
 // 無論有無符合檔案，皮會寄送。
 // 以 TextMailSender 介面取代函式型注入（ISP），sender 為 nil 時自動使用 realTextMailSender。
 func mailSendWithSender(args []string, sender TextMailSender) error {
@@ -208,7 +208,7 @@ func mailSendWithSender(args []string, sender TextMailSender) error {
 		return errors.New("未設定收件人，請先執行 'filecheck mail enable --to <email>' 或使用 --to 指定")
 	}
 
-	// 掃描前一日符合 YYYY-MM-DD 格式的檔案（有無均寄）
+	// 揃描前一日的 laravel-{YYYY-MM-DD}.log 檔案（有無均寄）
 	scanDir := filecheck.ResolveScanDir(settings.RootDir, settings.Filecheck.ScanDir)
 	files, scanErr := filecheck.ScanForDate(scanDir, targetDay)
 	subject, body := filecheck.BuildMailReport(scanDir, files, targetDay, scanErr)
@@ -246,8 +246,9 @@ func printHelp() {
 	fmt.Println("filecheck  管理 filecheck 目錄掃描報告的郵件通知")
 	fmt.Println()
 	fmt.Println("說明：")
-	fmt.Println("  在每日指定時間（預設 10:00）掃描目錄，確認是否存在包含前一日日期")
-	fmt.Println("  （YYYY-MM-DD 格式）的檔案，無論找到或未找到皆以郵件通知指定人員。")
+	fmt.Println("  在每日指定時間（預設 10:00）掃描目錄，確認是否存在前一日對應的")
+	fmt.Printf("  laravel-{YYYY-MM-DD}.log 檔案（例：%s），無論找到或未找到皆以郵件通知指定人員。\n",
+		filecheck.TargetFileName(time.Now().AddDate(0, 0, -1)))
 	fmt.Println("  SMTP 連線設定繼承自 'mail' 指令的 SMTP 組態（共用 SMTP 伺服器）。")
 	fmt.Println("  此郵件通知功能獨立於監控 watch log 的 mail 指令。")
 	fmt.Println()
@@ -299,7 +300,7 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("與 mail 指令的差異：")
 	fmt.Println("  mail send       寄送 xwatch-watch-logs（檔案系統監控日誌，含 zip 附件）")
-	fmt.Println("  filecheck send  寄送目錄檔案存在性結果（YYYY-MM-DD 格式比對，純文字）")
+	fmt.Println("  filecheck send  掃描 laravel-{YYYY-MM-DD}.log 存在性並寄送報告（純文字）")
 }
 
 //  工具函式

@@ -286,14 +286,14 @@ func TestMailSend_BodyContainsFoundWhenFileMatchesPattern(t *testing.T) {
 	setupConfig(t)
 	s, _ := config.Load()
 
-	// 在預設 scanDir（storage/logs）建立含昨天 YYYY-MM-DD 格式的檔案
+	// 在預設 scanDir（storage/logs）建立符合 laravel-{YYYY-MM-DD}.log 格式的檔案
 	yesterday := time.Now().AddDate(0, 0, -1)
-	datePattern := yesterday.Format(filecheck.FileDateFormat)
+	targetFile := filecheck.TargetFileName(yesterday) // e.g. "laravel-2026-03-08.log"
 	scanDir := filecheck.DefaultScanDir(s.RootDir)
 	if err := os.MkdirAll(scanDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.WriteFile(filepath.Join(scanDir, "report_"+datePattern+".csv"), []byte("data"), 0o644)
+	_ = os.WriteFile(filepath.Join(scanDir, targetFile), []byte("data"), 0o644)
 
 	_ = mailEnable([]string{"--to", "test@example.com"})
 
