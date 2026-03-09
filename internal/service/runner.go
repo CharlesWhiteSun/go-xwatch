@@ -23,16 +23,17 @@ type Runner struct {
 	Settings config.Settings
 	Logger   *slog.Logger
 
-	DataDirFn               func() (string, error)
-	WatcherFn               func(ctx context.Context, root string, logger *slog.Logger, onEvent func(watcher.Event)) error
-	Sinks                   []pipeline.EventSink
-	Now                     func() time.Time
-	HeartbeatLogDirFn       func() (string, error)                                                                                         // 測試時可覆寫，預設使用 heartbeat.DefaultLogDir
-	ConfigLoadFn            func() (config.Settings, error)                                                                                // 測試時可覆寫，預設使用 config.Load
-	HeartbeatReloadInterval time.Duration                                                                                                  // 心跳熱重載間隔，預設 30s，測試時可縮短
-	MailReloadInterval      time.Duration                                                                                                  // 郵件排程熱重載間隔，預設 30s，測試時可縮短
-	FilecheckReloadInterval time.Duration                                                                                                  // filecheck 熱重載間隔，預設 30s，測試時可縮短
-	MailSchedulerFn         func(ctx context.Context, logger *slog.Logger, mail config.MailSettings, rootDir string, now func() time.Time) // 測試時可覆寫，預設使用 runMailScheduler
+	DataDirFn                  func() (string, error)
+	WatcherFn                  func(ctx context.Context, root string, logger *slog.Logger, onEvent func(watcher.Event)) error
+	Sinks                      []pipeline.EventSink
+	Now                        func() time.Time
+	HeartbeatLogDirFn          func() (string, error)                                                                                         // 測試時可覆寫，預設使用 heartbeat.DefaultLogDir
+	ConfigLoadFn               func() (config.Settings, error)                                                                                // 測試時可覆寫，預設使用 config.Load
+	HeartbeatReloadInterval    time.Duration                                                                                                  // 心跳熱重載間隔，預設 30s，測試時可縮短
+	MailReloadInterval         time.Duration                                                                                                  // 郵件排程熱重載間隔，預設 30s，測試時可縮短
+	FilecheckReloadInterval    time.Duration                                                                                                  // filecheck 熱重載間隔，預設 30s，測試時可縮短
+	WatchExcludeReloadInterval time.Duration                                                                                                  // WatchExclude 熱重載間隔，預設 30s，測試時可縮短
+	MailSchedulerFn            func(ctx context.Context, logger *slog.Logger, mail config.MailSettings, rootDir string, now func() time.Time) // 測試時可覆寫，預設使用 runMailScheduler
 }
 
 func (r *Runner) Run(ctx context.Context) error {
@@ -113,15 +114,19 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 	}()
 
+	onEvent := func(ev watcher.Event) {
+		select {
+		case eventCh <- ev:
+		default:
+			logger.Warn(fmt.Sprintf("事件通道已滿，丟棄：%s", ev.Path))
+		}
+	}
+
+	// WatchExclude 管理器（支援熱重載）：服務啟動後當排除清單或啟用狀態改變，
+	// 不需重啟服務即可自動套用新設定。CLI 指令執行後的異動也會在下一輪輪詢自動生效。
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- r.watcherFn()(ctx, root, logger, func(ev watcher.Event) {
-			select {
-			case eventCh <- ev:
-			default:
-				logger.Warn(fmt.Sprintf("事件通道已滿，丟棄：%s", ev.Path))
-			}
-		})
+		errCh <- r.runWatchManager(ctx, root, logger, onEvent)
 	}()
 
 	select {
@@ -193,11 +198,13 @@ func (r *Runner) dataDirFn() func() (string, error) {
 	}
 }
 
-func (r *Runner) watcherFn() func(ctx context.Context, root string, logger *slog.Logger, onEvent func(watcher.Event)) error {
+// buildWatcherForSettings 依傳入的 Settings 建立對應的 watcher 函式。
+// WatcherFn 注入優先（測試），其次依 WatchExclude 設定動態建立，最後 fallback 到 watcher.Run。
+func (r *Runner) buildWatcherForSettings(s config.Settings) func(ctx context.Context, root string, logger *slog.Logger, onEvent func(watcher.Event)) error {
 	if r.WatcherFn != nil {
 		return r.WatcherFn
 	}
-	we := r.Settings.WatchExclude
+	we := s.WatchExclude
 	if we.IsEnabled() && len(we.Dirs) > 0 {
 		dirs := append([]string(nil), we.Dirs...)
 		return func(ctx context.Context, root string, logger *slog.Logger, onEvent func(watcher.Event)) error {
@@ -209,6 +216,84 @@ func (r *Runner) watcherFn() func(ctx context.Context, root string, logger *slog
 		}
 	}
 	return watcher.Run
+}
+
+// watchExcludeKey 記錄影響 WatchExclude 行為的欄位，用於偵測設定變更。
+type watchExcludeKey struct {
+	enabled bool
+	dirs    string // 以逗號 join 後比對
+}
+
+func watchExcludeKeyFromSettings(s config.Settings) watchExcludeKey {
+	return watchExcludeKey{
+		enabled: s.WatchExclude.IsEnabled(),
+		dirs:    strings.Join(s.WatchExclude.Dirs, ","),
+	}
+}
+
+// runWatchManager 在服務主迴圈內管理 watcher 的生命週期，支援 WatchExclude 熱重載。
+// 當 WatchExclude 設定（啟用狀態或排除目錄清單）發生變更時，自動取消舊 watcher 並以
+// 新設定重新啟動，事件通道（eventCh）持續運作不中斷。
+// CLI 指令（如 watchexclude enable/disable/add-to/set）修改 config.json 後，
+// 會在下一輪輪詢（預設 30s）自動生效，無需重啟服務。
+func (r *Runner) runWatchManager(ctx context.Context, root string, logger *slog.Logger, onEvent func(watcher.Event)) error {
+	cfgFn := r.configLoadFn()
+	curSettings := r.Settings
+	curKey := watchExcludeKeyFromSettings(curSettings)
+
+	reloadTicker := time.NewTicker(r.watchExcludeReloadInterval())
+	defer reloadTicker.Stop()
+
+	for {
+		watchCtx, watchCancel := context.WithCancel(ctx)
+		watchFn := r.buildWatcherForSettings(curSettings)
+
+		watchErrCh := make(chan error, 1)
+		go func() {
+			watchErrCh <- watchFn(watchCtx, root, logger, onEvent)
+		}()
+
+		restarted := false
+	inner:
+		for {
+			select {
+			case <-reloadTicker.C:
+				newSettings, err := cfgFn()
+				if err != nil {
+					continue
+				}
+				newKey := watchExcludeKeyFromSettings(newSettings)
+				if newKey != curKey {
+					logger.Info(fmt.Sprintf("WatchExclude 設定已變更（enabled=%v dirs=%v），重新啟動監控...",
+						newSettings.WatchExclude.IsEnabled(), newSettings.WatchExclude.Dirs))
+					watchCancel()
+					<-watchErrCh
+					curKey = newKey
+					curSettings = newSettings
+					restarted = true
+					break inner
+				}
+			case err := <-watchErrCh:
+				watchCancel()
+				return err
+			case <-ctx.Done():
+				watchCancel()
+				<-watchErrCh
+				return nil
+			}
+		}
+		if !restarted {
+			watchCancel()
+			return nil
+		}
+	}
+}
+
+func (r *Runner) watchExcludeReloadInterval() time.Duration {
+	if r.WatchExcludeReloadInterval > 0 {
+		return r.WatchExcludeReloadInterval
+	}
+	return 30 * time.Second
 }
 
 // buildExcludeSkipFn 依 rootDir 與目錄名稱清單建立路徑排除函式。

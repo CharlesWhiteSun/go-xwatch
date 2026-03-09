@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1038,7 +1039,7 @@ func TestBuildExcludeSkipFn_CaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestWatcherFn_WithExclude_UsesRunWithOptions(t *testing.T) {
+func TestBuildWatcherForSettings_WithExclude_UsesRunWithOptions(t *testing.T) {
 	tmp := t.TempDir()
 
 	r := &Runner{
@@ -1052,9 +1053,10 @@ func TestWatcherFn_WithExclude_UsesRunWithOptions(t *testing.T) {
 		Logger: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
 	}
 
-	fn := r.watcherFn()
+	// buildWatcherForSettings 應依傳入的 settings 建立函式，不得為 nil
+	fn := r.buildWatcherForSettings(r.Settings)
 	if fn == nil {
-		t.Fatal("watcherFn should not be nil")
+		t.Fatal("buildWatcherForSettings should not be nil")
 	}
 
 	// 驗證 buildExcludeSkipFn 的行為符合預期
@@ -1067,5 +1069,195 @@ func TestWatcherFn_WithExclude_UsesRunWithOptions(t *testing.T) {
 	}
 	if skipFn(publicFile) {
 		t.Fatal("public subfile should not be skipped")
+	}
+}
+
+func TestBuildWatcherForSettings_WatcherFnInjected_UsesThat(t *testing.T) {
+	tmp := t.TempDir()
+	called := false
+	injected := func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+		called = true
+		return nil
+	}
+	r := &Runner{
+		Settings:  config.Settings{RootDir: tmp},
+		WatcherFn: injected,
+	}
+	fn := r.buildWatcherForSettings(r.Settings)
+	_ = fn(context.Background(), tmp, slog.Default(), func(watcher.Event) {})
+	if !called {
+		t.Fatal("注入的 WatcherFn 應被呼叫")
+	}
+}
+
+func TestWatchExcludeKeyFromSettings_DetectsEnabledChange(t *testing.T) {
+	s1 := config.Settings{
+		RootDir:      "x",
+		WatchExclude: config.WatchExcludeSettings{Enabled: config.BoolPtr(true), Dirs: []string{"a"}},
+	}
+	s2 := config.Settings{
+		RootDir:      "x",
+		WatchExclude: config.WatchExcludeSettings{Enabled: config.BoolPtr(false), Dirs: []string{"a"}},
+	}
+	if watchExcludeKeyFromSettings(s1) == watchExcludeKeyFromSettings(s2) {
+		t.Fatal("啟用狀態變更應被偵測到")
+	}
+}
+
+func TestWatchExcludeKeyFromSettings_DetectsDirsChange(t *testing.T) {
+	s1 := config.Settings{RootDir: "x", WatchExclude: config.WatchExcludeSettings{Dirs: []string{"app"}}}
+	s2 := config.Settings{RootDir: "x", WatchExclude: config.WatchExcludeSettings{Dirs: []string{"app", "storage"}}}
+	if watchExcludeKeyFromSettings(s1) == watchExcludeKeyFromSettings(s2) {
+		t.Fatal("目錄清單變更應被偵測到")
+	}
+}
+
+func TestWatchExcludeKeyFromSettings_SameSettings_Equal(t *testing.T) {
+	s := config.Settings{RootDir: "x", WatchExclude: config.WatchExcludeSettings{Dirs: []string{"a", "b"}}}
+	if watchExcludeKeyFromSettings(s) != watchExcludeKeyFromSettings(s) {
+		t.Fatal("相同設定的 key 應相等")
+	}
+}
+
+func TestRunWatchManager_HotReloads_OnExcludeChange(t *testing.T) {
+	tmp := t.TempDir()
+
+	var startMu sync.Mutex
+	startCount := 0
+
+	// 可控制的 WatcherFn：每次被呼叫計數，並封鎖直到 ctx 被取消
+	watchFn := func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+		startMu.Lock()
+		startCount++
+		startMu.Unlock()
+		<-ctx.Done()
+		return nil
+	}
+
+	original := config.Settings{
+		RootDir:      tmp,
+		WatchExclude: config.WatchExcludeSettings{Enabled: config.BoolPtr(true), Dirs: []string{"app"}},
+	}
+	changed := config.Settings{
+		RootDir:      tmp,
+		WatchExclude: config.WatchExcludeSettings{Enabled: config.BoolPtr(true), Dirs: []string{"app", "storage"}},
+	}
+
+	var cfgMu sync.Mutex
+	cfgCallCount := 0
+
+	r := &Runner{
+		Settings:                   original,
+		WatcherFn:                  watchFn,
+		Logger:                     slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		WatchExcludeReloadInterval: 30 * time.Millisecond,
+		ConfigLoadFn: func() (config.Settings, error) {
+			cfgMu.Lock()
+			defer cfgMu.Unlock()
+			cfgCallCount++
+			if cfgCallCount >= 2 {
+				return changed, nil
+			}
+			return original, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- r.runWatchManager(ctx, tmp, r.Logger, func(watcher.Event) {})
+	}()
+
+	deadline := time.After(3 * time.Second)
+	tick := time.NewTicker(15 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-tick.C:
+			startMu.Lock()
+			count := startCount
+			startMu.Unlock()
+			if count >= 2 {
+				cancel()
+				if err := <-errCh; err != nil {
+					t.Fatalf("未預期的錯誤：%v", err)
+				}
+				return
+			}
+		case <-deadline:
+			cancel()
+			<-errCh
+			startMu.Lock()
+			count := startCount
+			startMu.Unlock()
+			t.Fatalf("逾時：watcher 應已重新啟動，startCount=%d", count)
+		}
+	}
+}
+
+func TestRunWatchManager_NoRestart_WhenSettingsUnchanged(t *testing.T) {
+	tmp := t.TempDir()
+
+	var startMu sync.Mutex
+	startCount := 0
+	watchFn := func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+		startMu.Lock()
+		startCount++
+		startMu.Unlock()
+		<-ctx.Done()
+		return nil
+	}
+
+	settings := config.Settings{
+		RootDir:      tmp,
+		WatchExclude: config.WatchExcludeSettings{Dirs: []string{"app"}},
+	}
+
+	r := &Runner{
+		Settings:                   settings,
+		WatcherFn:                  watchFn,
+		Logger:                     slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		WatchExcludeReloadInterval: 30 * time.Millisecond,
+		ConfigLoadFn:               func() (config.Settings, error) { return settings, nil },
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- r.runWatchManager(ctx, tmp, r.Logger, func(watcher.Event) {})
+	}()
+	<-errCh // ctx 逾期時回傳 nil
+
+	startMu.Lock()
+	count := startCount
+	startMu.Unlock()
+	if count != 1 {
+		t.Fatalf("設定未變更，watcher 應僅啟動一次，got %d", count)
+	}
+}
+
+func TestRunWatchManager_PropagatesWatcherError(t *testing.T) {
+	tmp := t.TempDir()
+	expectedErr := errors.New("模擬 watcher 錯誤")
+
+	watchFn := func(ctx context.Context, root string, _ *slog.Logger, _ func(watcher.Event)) error {
+		return expectedErr
+	}
+
+	settings := config.Settings{RootDir: tmp}
+	r := &Runner{
+		Settings:                   settings,
+		WatcherFn:                  watchFn,
+		Logger:                     slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		WatchExcludeReloadInterval: 50 * time.Millisecond,
+		ConfigLoadFn:               func() (config.Settings, error) { return settings, nil },
+	}
+
+	ctx := context.Background()
+	err := r.runWatchManager(ctx, tmp, r.Logger, func(watcher.Event) {})
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf("應傳播 watcher 錯誤 %v，got %v", expectedErr, err)
 	}
 }
