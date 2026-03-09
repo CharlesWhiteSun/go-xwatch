@@ -960,3 +960,112 @@ func TestRunnerHeartbeatLogDir_FallbackUsesSuffixSubdir(t *testing.T) {
 		t.Fatalf("expected path ending with 'xwatch-heartbeat-logs', got %s", dir)
 	}
 }
+
+// --- buildExcludeSkipFn 測試 ---
+
+func TestBuildExcludeSkipFn_SkipsExactDir(t *testing.T) {
+	root := t.TempDir()
+	skip := buildExcludeSkipFn(root, []string{"storage"})
+	if !skip(filepath.Join(root, "storage")) {
+		t.Fatal("exact excluded dir should be skipped")
+	}
+}
+
+func TestBuildExcludeSkipFn_SkipsSubpathUnderDir(t *testing.T) {
+	root := t.TempDir()
+	skip := buildExcludeSkipFn(root, []string{"storage"})
+	if !skip(filepath.Join(root, "storage", "uploads", "file.txt")) {
+		t.Fatal("file under excluded dir should be skipped")
+	}
+}
+
+func TestBuildExcludeSkipFn_AllowsOtherDirs(t *testing.T) {
+	root := t.TempDir()
+	skip := buildExcludeSkipFn(root, []string{"storage"})
+	if skip(filepath.Join(root, "public", "file.txt")) {
+		t.Fatal("file under non-excluded dir should not be skipped")
+	}
+}
+
+func TestBuildExcludeSkipFn_AllowsSimilarlyNamedDirs(t *testing.T) {
+	// "storage2" starts with "storage" but is NOT excluded
+	root := t.TempDir()
+	skip := buildExcludeSkipFn(root, []string{"storage"})
+	if skip(filepath.Join(root, "storage2", "file.txt")) {
+		t.Fatal("storage2 should NOT be treated as excluded (only prefix match with slash separator)")
+	}
+}
+
+func TestBuildExcludeSkipFn_MultipleDirs(t *testing.T) {
+	root := t.TempDir()
+	skip := buildExcludeSkipFn(root, []string{"app", "config", "storage"})
+	cases := []struct {
+		path     string
+		wantSkip bool
+	}{
+		{filepath.Join(root, "app"), true},
+		{filepath.Join(root, "config", "db.yml"), true},
+		{filepath.Join(root, "storage", "file.log"), true},
+		{filepath.Join(root, "public", "index.html"), false},
+		{filepath.Join(root, "routes", "web.go"), false},
+	}
+	for _, tc := range cases {
+		got := skip(tc.path)
+		if got != tc.wantSkip {
+			t.Errorf("skip(%q) = %v, want %v", tc.path, got, tc.wantSkip)
+		}
+	}
+}
+
+func TestBuildExcludeSkipFn_AbsolutePathInDirs(t *testing.T) {
+	root := t.TempDir()
+	absExclude := t.TempDir() // 完全獨立的絕對路徑，與 root 無關
+	skip := buildExcludeSkipFn(root, []string{absExclude})
+	if !skip(filepath.Join(absExclude, "file.txt")) {
+		t.Fatal("absolute excluded dir should be skipped")
+	}
+	if skip(filepath.Join(root, "other", "file.txt")) {
+		t.Fatal("non-excluded dir should not be skipped")
+	}
+}
+
+func TestBuildExcludeSkipFn_CaseInsensitive(t *testing.T) {
+	root := t.TempDir()
+	skip := buildExcludeSkipFn(root, []string{"Storage"})
+	// Should match regardless of case — mix upper/lower in the queried path
+	if !skip(filepath.Join(root, "STORAGE", "file.txt")) {
+		t.Fatal("path matching should be case-insensitive")
+	}
+}
+
+func TestWatcherFn_WithExclude_UsesRunWithOptions(t *testing.T) {
+	tmp := t.TempDir()
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir: tmp,
+			WatchExclude: config.WatchExcludeSettings{
+				Enabled: config.BoolPtr(true),
+				Dirs:    []string{"storage"},
+			},
+		},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+	}
+
+	fn := r.watcherFn()
+	if fn == nil {
+		t.Fatal("watcherFn should not be nil")
+	}
+
+	// 驗證 buildExcludeSkipFn 的行為符合預期
+	skipFn := buildExcludeSkipFn(tmp, []string{"storage"})
+	storageFile := filepath.Join(tmp, "storage", "x.txt")
+	publicFile := filepath.Join(tmp, "public", "y.txt")
+
+	if !skipFn(storageFile) {
+		t.Fatal("storage subfile should be skipped")
+	}
+	if skipFn(publicFile) {
+		t.Fatal("public subfile should not be skipped")
+	}
+}

@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,6 +99,47 @@ func IsPublicEnv(env string) bool {
 // 新程式碼請使用 DefaultMailToListForEnv。
 var DefaultMailToList = DefaultMailToListProd
 
+// DefaultWatchExcludeDirs 為隱藏功能「監控排除清單」的預設略過目錄名稱（相對路徑）。
+// 這些目錄名稱在與 rootDir 合併後，將不被 watcher 監控。
+var DefaultWatchExcludeDirs = []string{"app", "config", "database", "resources", "routes", "storage"}
+
+const (
+	// DefaultWatchExcludeRawPassword 為監控排除清單管理功能的預設密碼（明文，僅供初始自動填入）。
+	DefaultWatchExcludeRawPassword = "httc245"
+	// watchExcludePasswordPepper 為密碼雜湊使用的固定 pepper，防止彩虹表攻擊。
+	watchExcludePasswordPepper = "xwatch-exclude-v1:pepper"
+)
+
+// WatchExcludeSettings 管理監控目錄排除清單（隱藏後台功能，不對外公開）。
+// 啟用時，Dirs 清單內的目錄（相對於 rootDir 或絕對路徑）將不被 watcher 監控。
+type WatchExcludeSettings struct {
+	// Enabled 決定功能是否啟用；nil 代表從未設定，預設視為 true。
+	Enabled      *bool    `json:"enabled,omitempty"`
+	Dirs         []string `json:"dirs,omitempty"`
+	PasswordHash string   `json:"passwordHash,omitempty"`
+}
+
+// IsEnabled 回傳排除功能是否啟用；Enabled 為 nil 時預設 true。
+func (we WatchExcludeSettings) IsEnabled() bool {
+	if we.Enabled == nil {
+		return true
+	}
+	return *we.Enabled
+}
+
+// HashWatchExcludePassword 以 SHA-256 + pepper 計算密碼雜湊，回傳 hex 字串。
+func HashWatchExcludePassword(raw string) string {
+	h := sha256.New()
+	h.Write([]byte(watchExcludePasswordPepper + ":" + raw))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// VerifyWatchExcludePassword 以常數時間比較驗證明文密碼是否符合雜湊。
+func VerifyWatchExcludePassword(raw, hash string) bool {
+	expected := HashWatchExcludePassword(raw)
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(hash)) == 1
+}
+
 const (
 	DefaultMailSchedule          = "10:00"
 	DefaultMailTimezone          = "Asia/Taipei"
@@ -127,8 +171,10 @@ type Settings struct {
 	ServiceName string `json:"serviceName,omitempty"`
 	// InstalledVersion 記錄服務安裝（init --install-service）時的程式版本號。
 	// 供 CLI 啟動時進行版本一致性檢查，避免不同版本的主程式操作服務。
-	InstalledVersion string    `json:"installedVersion,omitempty"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	InstalledVersion string `json:"installedVersion,omitempty"`
+	// WatchExclude 為隱藏後台功能，管理監控目錄排除清單（不對外公開）。
+	WatchExclude WatchExcludeSettings `json:"watchExclude,omitempty"`
+	UpdatedAt    time.Time            `json:"updatedAt"`
 }
 
 // activeServiceSuffix 為目前程序對應的服務後綴（例如 "plant-A"）。
@@ -286,7 +332,22 @@ func ValidateAndFillDefaults(s Settings) (Settings, error) {
 	}
 	s.Filecheck = filecheck
 
+	s.WatchExclude = fillWatchExcludeDefaults(s.WatchExclude)
+
 	return s, nil
+}
+
+// fillWatchExcludeDefaults 補齊監控排除清單的預設值：
+// - Dirs 為空時填入預設排除目錄清單
+// - PasswordHash 為空時填入預設密碼的雜湊值
+func fillWatchExcludeDefaults(we WatchExcludeSettings) WatchExcludeSettings {
+	if len(we.Dirs) == 0 {
+		we.Dirs = append([]string(nil), DefaultWatchExcludeDirs...)
+	}
+	if we.PasswordHash == "" {
+		we.PasswordHash = HashWatchExcludePassword(DefaultWatchExcludeRawPassword)
+	}
+	return we
 }
 
 func validateAndFillFilecheckDefaults(fc FilecheckSettings, env string) (FilecheckSettings, error) {

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -189,4 +190,105 @@ done:
 		t.Fatalf("hook path not set, got %q", hookPath)
 	}
 	_ = <-errCh
+}
+
+// --- ShouldSkipFn 測試 ---
+
+func TestShouldSkipFn_ExcludesTargetDir(t *testing.T) {
+	tmp := t.TempDir()
+
+	// 建立被排除的子目錄及其中的檔案
+	excludedDir := filepath.Join(tmp, "storage")
+	if err := os.MkdirAll(excludedDir, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// 建立允許的子目錄
+	allowedDir := filepath.Join(tmp, "logs")
+	if err := os.MkdirAll(allowedDir, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	received := make(chan string, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- RunWithOptions(ctx, tmp, Options{
+			Logger: slog.Default(),
+			OnEvent: func(e Event) {
+				received <- e.Path
+			},
+			ShouldSkipFn: func(path string) bool {
+				clean := strings.ToLower(filepath.ToSlash(path))
+				excl := strings.ToLower(filepath.ToSlash(excludedDir))
+				return clean == excl || strings.HasPrefix(clean, excl+"/")
+			},
+		})
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// 寫入被排除目錄中的檔案 — 不應收到事件
+	os.WriteFile(filepath.Join(excludedDir, "secret.txt"), []byte("x"), 0o644)
+
+	// 寫入允許目錄中的檔案 — 應收到事件
+	allowedFile := filepath.Join(allowedDir, "ok.txt")
+	os.WriteFile(allowedFile, []byte("hello"), 0o644)
+
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case got := <-received:
+			if got == filepath.Join(excludedDir, "secret.txt") {
+				cancel()
+				<-errCh
+				t.Fatalf("received event for excluded path: %q", got)
+			}
+			if filepath.Clean(got) == filepath.Clean(allowedFile) {
+				cancel()
+				<-errCh
+				return // success
+			}
+		case <-deadline:
+			cancel()
+			<-errCh
+			t.Fatal("timeout: did not receive event for allowed file")
+		}
+	}
+}
+
+func TestShouldSkipFn_NilIsNoOp(t *testing.T) {
+	tmp := t.TempDir()
+	received := make(chan string, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- RunWithOptions(ctx, tmp, Options{
+			Logger:       slog.Default(),
+			OnEvent:      func(e Event) { received <- e.Path },
+			ShouldSkipFn: nil, // nil should be safe
+		})
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	path := filepath.Join(tmp, "test.txt")
+	os.WriteFile(path, []byte("x"), 0o644)
+
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case got := <-received:
+			if filepath.Clean(got) == filepath.Clean(path) {
+				cancel()
+				<-errCh
+				return
+			}
+		case <-deadline:
+			cancel()
+			<-errCh
+			t.Fatal("timeout: nil ShouldSkipFn should not block events")
+		}
+	}
 }

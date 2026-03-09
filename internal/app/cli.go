@@ -20,6 +20,7 @@ import (
 	"go-xwatch/internal/mailcmd"
 	"go-xwatch/internal/paths"
 	"go-xwatch/internal/service"
+	"go-xwatch/internal/watchexcludecmd"
 )
 
 const defaultElevationPrompt = "偵測到目前非系統管理員，是否重新以系統管理員執行？(Y/n): "
@@ -320,6 +321,11 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 
 	reg.Register(cli.CommandFunc{CommandName: "env", Fn: func(args []string) error {
 		return envcmd.Run(args)
+	}})
+
+	// 隱藏後台管理指令，不出現於 printUsage 或任何操作說明中。
+	reg.Register(cli.CommandFunc{CommandName: "watchexclude", Fn: func(args []string) error {
+		return watchexcludecmd.Run(args)
 	}})
 
 	return reg

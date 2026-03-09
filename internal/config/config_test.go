@@ -805,3 +805,128 @@ func TestDeleteConfigDir_EmptySuffix_PreservesBaseDir(t *testing.T) {
 		t.Errorf("傳統模式共用根目錄應保留，實際 err: %v", err)
 	}
 }
+
+// --- WatchExclude 相關測試 ---
+
+func TestWatchExcludeIsEnabled_NilDefaultsToTrue(t *testing.T) {
+	we := WatchExcludeSettings{Enabled: nil}
+	if !we.IsEnabled() {
+		t.Fatal("nil Enabled should default to true")
+	}
+}
+
+func TestWatchExcludeIsEnabled_ExplicitTrue(t *testing.T) {
+	we := WatchExcludeSettings{Enabled: BoolPtr(true)}
+	if !we.IsEnabled() {
+		t.Fatal("explicit true should return true")
+	}
+}
+
+func TestWatchExcludeIsEnabled_ExplicitFalse(t *testing.T) {
+	we := WatchExcludeSettings{Enabled: BoolPtr(false)}
+	if we.IsEnabled() {
+		t.Fatal("explicit false should return false")
+	}
+}
+
+func TestHashAndVerifyWatchExcludePassword(t *testing.T) {
+	raw := "mysecretpassword"
+	hash := HashWatchExcludePassword(raw)
+
+	if hash == "" {
+		t.Fatal("expected non-empty hash")
+	}
+	if hash == raw {
+		t.Fatal("hash should not equal raw password")
+	}
+	if !VerifyWatchExcludePassword(raw, hash) {
+		t.Fatal("correct raw should verify")
+	}
+	if VerifyWatchExcludePassword("wrongpassword", hash) {
+		t.Fatal("wrong raw should not verify")
+	}
+}
+
+func TestHashWatchExcludePassword_IsDeterministic(t *testing.T) {
+	h1 := HashWatchExcludePassword("test123")
+	h2 := HashWatchExcludePassword("test123")
+	if h1 != h2 {
+		t.Fatalf("same password should produce same hash: %q vs %q", h1, h2)
+	}
+}
+
+func TestHashWatchExcludePassword_DifferentInputsDifferentHashes(t *testing.T) {
+	h1 := HashWatchExcludePassword("abc")
+	h2 := HashWatchExcludePassword("xyz")
+	if h1 == h2 {
+		t.Fatal("different passwords should produce different hashes")
+	}
+}
+
+func TestFillWatchExcludeDefaults_FillsOnEmptyLoad(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	if err := Save(Settings{RootDir: root}); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if len(s.WatchExclude.Dirs) == 0 {
+		t.Fatal("expected WatchExclude.Dirs to be filled with defaults")
+	}
+	if s.WatchExclude.PasswordHash == "" {
+		t.Fatal("expected WatchExclude.PasswordHash to be filled with default hash")
+	}
+	// Default dirs should contain the well-known names
+	dirsMap := make(map[string]bool)
+	for _, d := range s.WatchExclude.Dirs {
+		dirsMap[d] = true
+	}
+	for _, expected := range DefaultWatchExcludeDirs {
+		if !dirsMap[expected] {
+			t.Fatalf("expected dir %q in defaults, got %v", expected, s.WatchExclude.Dirs)
+		}
+	}
+}
+
+func TestFillWatchExcludeDefaults_PreservesExistingDirs(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	customDirs := []string{"custom1", "custom2"}
+	if err := Save(Settings{RootDir: root, WatchExclude: WatchExcludeSettings{Dirs: customDirs}}); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if len(s.WatchExclude.Dirs) != 2 {
+		t.Fatalf("expected 2 dirs, got %d: %v", len(s.WatchExclude.Dirs), s.WatchExclude.Dirs)
+	}
+}
+
+func TestFillWatchExcludeDefaults_DefaultPasswordVerifies(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	if err := Save(Settings{RootDir: root}); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if !VerifyWatchExcludePassword(DefaultWatchExcludeRawPassword, s.WatchExclude.PasswordHash) {
+		t.Fatal("default password should verify against default hash")
+	}
+}

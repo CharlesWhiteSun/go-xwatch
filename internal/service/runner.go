@@ -197,7 +197,42 @@ func (r *Runner) watcherFn() func(ctx context.Context, root string, logger *slog
 	if r.WatcherFn != nil {
 		return r.WatcherFn
 	}
+	we := r.Settings.WatchExclude
+	if we.IsEnabled() && len(we.Dirs) > 0 {
+		dirs := append([]string(nil), we.Dirs...)
+		return func(ctx context.Context, root string, logger *slog.Logger, onEvent func(watcher.Event)) error {
+			return watcher.RunWithOptions(ctx, root, watcher.Options{
+				Logger:       logger,
+				OnEvent:      onEvent,
+				ShouldSkipFn: buildExcludeSkipFn(root, dirs),
+			})
+		}
+	}
 	return watcher.Run
+}
+
+// buildExcludeSkipFn 依 rootDir 與目錄名稱清單建立路徑排除函式。
+// 相對路徑名稱會與 root 合併為絕對路徑後進行前綴比對，達到子目錄完整排除。
+func buildExcludeSkipFn(root string, dirs []string) func(string) bool {
+	abs := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		var full string
+		if filepath.IsAbs(d) {
+			full = d
+		} else {
+			full = filepath.Join(root, d)
+		}
+		abs = append(abs, filepath.ToSlash(strings.ToLower(full)))
+	}
+	return func(path string) bool {
+		clean := filepath.ToSlash(strings.ToLower(path))
+		for _, excl := range abs {
+			if clean == excl || strings.HasPrefix(clean, excl+"/") {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 func (r *Runner) nowFn() func() time.Time {

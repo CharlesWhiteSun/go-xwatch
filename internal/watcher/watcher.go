@@ -30,6 +30,9 @@ type Options struct {
 	OnEvent   func(Event)
 	WatcherFn func() (*fsnotify.Watcher, error)
 	Now       func() time.Time
+	// ShouldSkipFn 為額外的路徑超絖判斷函式，回傳 true 表示該路徑應被略過（不監控也不進入子目錄）。
+	// 這補充内建的 shouldIgnore （.git、node_modules、tmp 等），而非取代。
+	ShouldSkipFn func(path string) bool
 }
 
 // Run 保留舊介面，委派到 RunWithOptions。
@@ -60,6 +63,16 @@ func RunWithOptions(ctx context.Context, root string, opt Options) error {
 	if watchFactory == nil {
 		watchFactory = fsnotify.NewWatcher
 	}
+	// skipFn 將內建規則與呼叫端註入的 ShouldSkipFn 合併，奮對兩層過濾需求。
+	skipFn := func(path string) bool {
+		if shouldIgnore(path) {
+			return true
+		}
+		if opt.ShouldSkipFn != nil {
+			return opt.ShouldSkipFn(path)
+		}
+		return false
+	}
 
 	info, err := os.Stat(root)
 	if err != nil {
@@ -75,7 +88,7 @@ func RunWithOptions(ctx context.Context, root string, opt Options) error {
 	}
 	defer watcher.Close()
 
-	if err := addRecursive(watcher, root); err != nil {
+	if err := addRecursive(watcher, root, skipFn); err != nil {
 		return err
 	}
 	logger.Info(fmt.Sprintf("監視開始，根目錄：%s", root))
@@ -90,7 +103,7 @@ func RunWithOptions(ctx context.Context, root string, opt Options) error {
 				logger.Error(fmt.Sprintf("監視器錯誤：%v", err))
 			}
 		case event := <-watcher.Events:
-			if shouldIgnore(event.Name) {
+			if skipFn(event.Name) {
 				continue
 			}
 			info := Event{Path: event.Name, Op: event.Op, TS: nowFn()}
@@ -105,7 +118,7 @@ func RunWithOptions(ctx context.Context, root string, opt Options) error {
 			}
 			if event.Has(fsnotify.Create) {
 				if fi, statErr := os.Stat(event.Name); statErr == nil && fi.IsDir() {
-					if err := addRecursive(watcher, event.Name); err != nil {
+					if err := addRecursive(watcher, event.Name, skipFn); err != nil {
 						logger.Error(fmt.Sprintf("加入新資料夾失敗：%s，錯誤：%v", event.Name, err))
 					}
 				}
@@ -113,7 +126,7 @@ func RunWithOptions(ctx context.Context, root string, opt Options) error {
 		}
 	}
 }
-func addRecursive(w *fsnotify.Watcher, root string) error {
+func addRecursive(w *fsnotify.Watcher, root string, skipFn func(string) bool) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -121,7 +134,7 @@ func addRecursive(w *fsnotify.Watcher, root string) error {
 		if !d.IsDir() {
 			return nil
 		}
-		if shouldIgnore(path) {
+		if skipFn(path) {
 			return filepath.SkipDir
 		}
 		return w.Add(path)
