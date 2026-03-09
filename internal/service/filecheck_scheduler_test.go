@@ -110,11 +110,9 @@ func TestSendFilecheckMail_MatchFound_SendsFoundSubject(t *testing.T) {
 	if err := os.MkdirAll(scanDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// 前一日 = 2026-03-03，YYYY-MM-DD = "2026-03-03"（2026年3月3日）
-	// FileDateFormat = "2006-01-02"  time.Date(2026,3,3) .Format("2006-01-02") = "2026-03-03"
+	// 前一日 = 2026-03-03，使用 TargetFileName 產生符合 ScanForDate 搜尋規則的檔名
 	yesterday := time.Date(2026, 3, 3, 0, 0, 0, 0, time.UTC)
-	datePattern := yesterday.Format(filecheck.FileDateFormat)
-	matchFile := "report_" + datePattern + ".csv"
+	matchFile := filecheck.TargetFileName(yesterday) // "laravel-2026-03-03.log"
 	_ = os.WriteFile(filepath.Join(scanDir, matchFile), []byte("data"), 0o644)
 
 	enabled := true
@@ -157,8 +155,8 @@ func TestSendFilecheckMail_CustomScanDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	yesterday := time.Date(2026, 3, 3, 0, 0, 0, 0, time.UTC)
-	datePattern := yesterday.Format(filecheck.FileDateFormat)
-	_ = os.WriteFile(filepath.Join(customScan, "myfile_"+datePattern+".log"), []byte("x"), 0o644)
+	// 使用 TargetFileName 產生正確檔名，確保符合 ScanForDate 搜尋規則
+	_ = os.WriteFile(filepath.Join(customScan, filecheck.TargetFileName(yesterday)), []byte("x"), 0o644)
 
 	enabled := true
 	s := config.Settings{

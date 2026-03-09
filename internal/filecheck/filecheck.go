@@ -100,7 +100,7 @@ func BuildMailReport(scanDir string, files []string, date time.Time, scanErr err
 	subject = fmt.Sprintf("XWatch 目錄檔案存在性報告：%s（%s）", dayStr, statusLabel)
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("前一日（%s）目錄檔案存在性報告\n", dayStr))
+	sb.WriteString(fmt.Sprintf("日期：%s 目錄檔案存在性報告\n", dayStr))
 	sb.WriteString(strings.Repeat("=", 56) + "\n\n")
 	sb.WriteString(fmt.Sprintf("掃描目錄：%s\n", scanDir))
 	sb.WriteString(fmt.Sprintf("目標檔名：%s（本次搜尋：%s）\n\n", FileNameTemplate, TargetFileName(date)))

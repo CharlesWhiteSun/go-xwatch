@@ -295,6 +295,50 @@ func TestBuildMailReport_ManyFilesShowEllipsis(t *testing.T) {
 	}
 }
 
+// TestBuildMailReport_BodyHeaderFormat 驗證內文第一行採用「日期：YYYY-MM-DD 目錄檔案存在性報告」格式，
+// 不再使用「前一日（...）」措辭，確保 send --day 指定任意日期時語意仍正確。
+func TestBuildMailReport_BodyHeaderFormat(t *testing.T) {
+	dayStr := reportDate.Format("2006-01-02") // "2026-03-03"
+	wantHeader := "日期：" + dayStr + " 目錄檔案存在性報告"
+
+	cases := []struct {
+		name    string
+		files   []string
+		scanErr error
+	}{
+		{"有符合檔案", []string{"laravel-2026-03-03.log"}, nil},
+		{"無符合檔案", nil, nil},
+		{"掃描異常", nil, os.ErrNotExist},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, body := BuildMailReport(reportDir, tc.files, reportDate, tc.scanErr, 0)
+			lines := strings.SplitN(body, "\n", 2)
+			if lines[0] != wantHeader {
+				t.Errorf("內文第一行格式有誤\n期望：%q\n實際：%q", wantHeader, lines[0])
+			}
+			// 確保不含舊格式「前一日（」
+			if strings.Contains(body, "前一日（") {
+				t.Errorf("內文不應再含「前一日（」舊格式，got:\n%s", body)
+			}
+		})
+	}
+}
+
+// TestBuildMailReport_BodyHeaderFormat_CustomDay 驗證以非昨天的任意日期呼叫時，
+// 內文第一行仍正確顯示該指定日期，而非固定使用「前一日」。
+func TestBuildMailReport_BodyHeaderFormat_CustomDay(t *testing.T) {
+	customDay := time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC)
+	dayStr := customDay.Format("2006-01-02")
+	wantHeader := "日期：" + dayStr + " 目錄檔案存在性報告"
+
+	_, body := BuildMailReport(reportDir, nil, customDay, nil, 0)
+	lines := strings.SplitN(body, "\n", 2)
+	if lines[0] != wantHeader {
+		t.Errorf("自訂日期內文第一行格式有誤\n期望：%q\n實際：%q", wantHeader, lines[0])
+	}
+}
+
 //  CountErrorLines
 
 func TestCountErrorLines_NoErrors(t *testing.T) {
