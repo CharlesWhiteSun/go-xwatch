@@ -211,7 +211,12 @@ func mailSendWithSender(args []string, sender TextMailSender) error {
 	// 揃描前一日的 laravel-{YYYY-MM-DD}.log 檔案（有無均寄）
 	scanDir := filecheck.ResolveScanDir(settings.RootDir, settings.Filecheck.ScanDir)
 	files, scanErr := filecheck.ScanForDate(scanDir, targetDay)
-	subject, body := filecheck.BuildMailReport(scanDir, files, targetDay, scanErr)
+	errorCount := 0
+	if len(files) > 0 {
+		count, _ := filecheck.CountErrorLines(scanDir, files[0])
+		errorCount = count
+	}
+	subject, body := filecheck.BuildMailReport(scanDir, files, targetDay, scanErr, errorCount)
 
 	// 組裝 SMTP 設定（繼承 mail 設定）
 	smtpCfg := settings.Mail

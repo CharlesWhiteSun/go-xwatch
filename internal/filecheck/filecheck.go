@@ -19,10 +19,29 @@ const FileDateFormat = "2006-01-02"
 // 例如：laravel-2026-03-04.log
 const FileNameTemplate = "laravel-%s.log"
 
+// ErrorMarker 是 laravel log 檔案中表示 ERROR 等級的標記字串，用於統計錯誤行數。
+const ErrorMarker = ".ERROR:"
+
 // TargetFileName 依給定日期回傳預期的目標檔案名稱。
 // 例如：date = 2026-03-04 → "laravel-2026-03-04.log"
 func TargetFileName(date time.Time) string {
 	return fmt.Sprintf(FileNameTemplate, date.Format(FileDateFormat))
+}
+
+// CountErrorLines 讀取 dir/filename 檔案，統計含有 ErrorMarker 的行數。
+// 檔案不存在或讀取失敗時回傳 0 與 error。
+func CountErrorLines(dir, filename string) (int, error) {
+	data, err := os.ReadFile(filepath.Join(dir, filename))
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, ErrorMarker) {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // ScanForDate 掃描 dir 目錄，找出名稱符合 laravel-{YYYY-MM-DD}.log 格式的檔案。
@@ -66,7 +85,7 @@ func ResolveScanDir(rootDir, configured string) string {
 // 確保「有無皆寄」的行為得以實現。
 //
 // date 為被掃描的前一日日期；datePattern 為在目錄中搜尋的格式（YYYY-MM-DD）。
-func BuildMailReport(scanDir string, files []string, date time.Time, scanErr error) (subject, body string) {
+func BuildMailReport(scanDir string, files []string, date time.Time, scanErr error, errorCount int) (subject, body string) {
 	dayStr := date.Format("2006-01-02")
 
 	var statusLabel string
@@ -91,15 +110,20 @@ func BuildMailReport(scanDir string, files []string, date time.Time, scanErr err
 	} else if len(files) == 0 {
 		sb.WriteString("結果：[NOT FOUND] 目錄中未找到包含指定日期格式的檔案\n")
 	} else {
-		sb.WriteString(fmt.Sprintf("結果：[FOUND] 找到 %d 個符合的檔案：\n", len(files)))
 		const maxShow = 20
+		var shown []string
 		for i, f := range files {
 			if i >= maxShow {
-				sb.WriteString(fmt.Sprintf("   以及另外 %d 個檔案\n", len(files)-maxShow))
 				break
 			}
-			sb.WriteString(fmt.Sprintf("  - %s\n", f))
+			shown = append(shown, f)
 		}
+		fileList := strings.Join(shown, ", ")
+		if len(files) > maxShow {
+			fileList += fmt.Sprintf("（以及另外 %d 個檔案）", len(files)-maxShow)
+		}
+		sb.WriteString(fmt.Sprintf("結果：[FOUND] 找到 %d 個符合的檔案：%s\n", len(files), fileList))
+		sb.WriteString(fmt.Sprintf("資料: 該日統計共 %d 筆有 ERROR 警告的內容。\n", errorCount))
 	}
 
 	sb.WriteString("\n" + strings.Repeat("=", 56) + "\n")

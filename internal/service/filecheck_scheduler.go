@@ -174,7 +174,12 @@ func sendFilecheckMail(ctx context.Context, logger *slog.Logger, s config.Settin
 	// 主動掃描前一日符合 YYYY-MM-DD 格式的檔案（確保時間到必寄，有無均送）
 	scanDir := filecheck.ResolveScanDir(s.RootDir, fc.ScanDir)
 	files, scanErr := filecheck.ScanForDate(scanDir, targetDay)
-	subject, body := filecheck.BuildMailReport(scanDir, files, targetDay, scanErr)
+	errorCount := 0
+	if len(files) > 0 {
+		count, _ := filecheck.CountErrorLines(scanDir, files[0])
+		errorCount = count
+	}
+	subject, body := filecheck.BuildMailReport(scanDir, files, targetDay, scanErr, errorCount)
 
 	// 寫入 filecheck log（不影響寄信流程）
 	resolvedDataDirFn := dataDirFn

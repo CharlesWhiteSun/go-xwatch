@@ -197,7 +197,7 @@ var reportDir = `D:\root\storage\logs`
 func TestBuildMailReport_Found(t *testing.T) {
 	target := TargetFileName(reportDate) // "laravel-2026-03-03.log"
 	files := []string{target, "laravel-2026-04-03.log"}
-	subject, body := BuildMailReport(reportDir, files, reportDate, nil)
+	subject, body := BuildMailReport(reportDir, files, reportDate, nil, 7)
 
 	// 主旨含顯示日期（YYYY-MM-DD 形式）與狀態
 	if !strings.Contains(subject, "2026-03-03") {
@@ -209,7 +209,7 @@ func TestBuildMailReport_Found(t *testing.T) {
 	if !strings.Contains(body, "[FOUND]") {
 		t.Errorf("內文應含 [FOUND]，got:\n%s", body)
 	}
-	// 內文應列出檔案名稱
+	// 結果應為單行格式，檔名在同一行
 	if !strings.Contains(body, target) {
 		t.Errorf("內文應含目標檔案名稱 %q，got:\n%s", target, body)
 	}
@@ -217,14 +217,21 @@ func TestBuildMailReport_Found(t *testing.T) {
 	if !strings.Contains(body, FileNameTemplate) {
 		t.Errorf("內文應含檔名模板 %q，got:\n%s", FileNameTemplate, body)
 	}
-	// 內文應含本次搜尋的目標檔名
-	if !strings.Contains(body, target) {
-		t.Errorf("內文應含本次搜尋目標 %q，got:\n%s", target, body)
+	// 檔名不應再以「  - 」項目格式列出
+	if strings.Contains(body, "  - "+target) {
+		t.Errorf("內文不應再以「  - 」項目格式列出檔名，got:\n%s", body)
+	}
+	// 應含 資料: 行，顯示錯誤數量
+	if !strings.Contains(body, "資料:") {
+		t.Errorf("內文應含 資料: 行，got:\n%s", body)
+	}
+	if !strings.Contains(body, "7 筆") {
+		t.Errorf("內文應含錯誤數量 7，got:\n%s", body)
 	}
 }
 
 func TestBuildMailReport_NotFound(t *testing.T) {
-	subject, body := BuildMailReport(reportDir, nil, reportDate, nil)
+	subject, body := BuildMailReport(reportDir, nil, reportDate, nil, 0)
 
 	if !strings.Contains(subject, "無符合檔案") {
 		t.Errorf("無檔案時主旨應含「無符合檔案」，got %q", subject)
@@ -235,7 +242,7 @@ func TestBuildMailReport_NotFound(t *testing.T) {
 }
 
 func TestBuildMailReport_ScanError(t *testing.T) {
-	subject, body := BuildMailReport(reportDir, nil, reportDate, os.ErrNotExist)
+	subject, body := BuildMailReport(reportDir, nil, reportDate, os.ErrNotExist, 0)
 
 	if !strings.Contains(subject, "掃描異常") {
 		t.Errorf("掃描錯誤時主旨應含「掃描異常」，got %q", subject)
@@ -258,7 +265,7 @@ func TestBuildMailReport_AlwaysNonEmpty(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			subject, body := BuildMailReport(reportDir, tc.files, reportDate, tc.scanErr)
+			subject, body := BuildMailReport(reportDir, tc.files, reportDate, tc.scanErr, 0)
 			if subject == "" {
 				t.Error("主旨不應為空")
 			}
@@ -270,7 +277,7 @@ func TestBuildMailReport_AlwaysNonEmpty(t *testing.T) {
 }
 
 func TestBuildMailReport_ContainsScanDir(t *testing.T) {
-	_, body := BuildMailReport(reportDir, nil, reportDate, nil)
+	_, body := BuildMailReport(reportDir, nil, reportDate, nil, 0)
 	if !strings.Contains(body, reportDir) {
 		t.Errorf("內文應含掃描目錄路徑 %q，got:\n%s", reportDir, body)
 	}
@@ -282,9 +289,81 @@ func TestBuildMailReport_ManyFilesShowEllipsis(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		files = append(files, fmt.Sprintf("file_%s_%02d.log", dateStr, i))
 	}
-	_, body := BuildMailReport(reportDir, files, reportDate, nil)
+	_, body := BuildMailReport(reportDir, files, reportDate, nil, 0)
 	if !strings.Contains(body, "另外") {
 		t.Errorf("超過 20 個檔案時應顯示省略，got:\n%s", body)
+	}
+}
+
+//  CountErrorLines
+
+func TestCountErrorLines_NoErrors(t *testing.T) {
+	tmp := t.TempDir()
+	content := "2026-03-04 INFO: application started\n2026-03-04 INFO: request received\n"
+	if err := os.WriteFile(filepath.Join(tmp, "laravel-2026-03-04.log"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	count, err := CountErrorLines(tmp, "laravel-2026-03-04.log")
+	if err != nil {
+		t.Fatalf("不應回傳錯誤，got %v", err)
+	}
+	if count != 0 {
+		t.Errorf("無 ERROR 行應回傳 0，got %d", count)
+	}
+}
+
+func TestCountErrorLines_SomeErrors(t *testing.T) {
+	tmp := t.TempDir()
+	content := "[2026-03-04] INFO: ok\n[2026-03-04].ERROR: something bad\n[2026-03-04] INFO: ok again\n[2026-03-04].ERROR: another bad line\n"
+	if err := os.WriteFile(filepath.Join(tmp, "laravel-2026-03-04.log"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	count, err := CountErrorLines(tmp, "laravel-2026-03-04.log")
+	if err != nil {
+		t.Fatalf("不應回傳錯誤，got %v", err)
+	}
+	if count != 2 {
+		t.Errorf("應統計到 2 筆 ERROR，got %d", count)
+	}
+}
+
+func TestCountErrorLines_AllErrors(t *testing.T) {
+	tmp := t.TempDir()
+	content := "[2026-03-04].ERROR: err1\n[2026-03-04].ERROR: err2\n[2026-03-04].ERROR: err3\n"
+	if err := os.WriteFile(filepath.Join(tmp, "laravel-2026-03-04.log"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	count, err := CountErrorLines(tmp, "laravel-2026-03-04.log")
+	if err != nil {
+		t.Fatalf("不應回傳錯誤，got %v", err)
+	}
+	if count != 3 {
+		t.Errorf("應統計到 3 筆 ERROR，got %d", count)
+	}
+}
+
+func TestCountErrorLines_FileNotFound(t *testing.T) {
+	tmp := t.TempDir()
+	count, err := CountErrorLines(tmp, "nonexistent.log")
+	if err == nil {
+		t.Error("檔案不存在時應回傳錯誤")
+	}
+	if count != 0 {
+		t.Errorf("檔案不存在時應回傳 0，got %d", count)
+	}
+}
+
+func TestCountErrorLines_EmptyFile(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "laravel-2026-03-04.log"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	count, err := CountErrorLines(tmp, "laravel-2026-03-04.log")
+	if err != nil {
+		t.Fatalf("空檔案不應回傳錯誤，got %v", err)
+	}
+	if count != 0 {
+		t.Errorf("空檔案應回傳 0，got %d", count)
 	}
 }
 
