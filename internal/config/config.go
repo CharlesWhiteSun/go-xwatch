@@ -56,7 +56,7 @@ var DefaultMailToListProd = []string{
 
 // DefaultMailToListCharles 為 charles 隱藏環境的預設收件人清單（不對外公開）。
 var DefaultMailToListCharles = []string{
-	"r021@@httc.com.tw",
+	"r021@httc.com.tw",
 	"charleswhitesun@gmail.com",
 }
 
@@ -315,13 +315,16 @@ func validateAndFillFilecheckDefaults(fc FilecheckSettings, env string) (Fileche
 	return fc, nil
 }
 
-// filterValidEmails 過濾 email 清單，移除不包含 @ 或含括號/空格的無效項目。
+// filterValidEmails 過濾 email 清單，移除不符合基本格式的無效項目。
+// 有效條件：確切含有一個 @，@ 左側與右側均非空，且不含空格、中括號、大小括號等特殊字元。
 func filterValidEmails(addrs []string) []string {
 	var out []string
 	for _, a := range addrs {
 		trimmed := strings.TrimSpace(a)
 		at := strings.Index(trimmed, "@")
-		if at > 0 && at < len(trimmed)-1 && !strings.ContainsAny(trimmed, " []()<>") {
+		if at > 0 && at < len(trimmed)-1 &&
+			strings.Count(trimmed, "@") == 1 &&
+			!strings.ContainsAny(trimmed, " []()<>") {
 			out = append(out, trimmed)
 		}
 	}
@@ -383,7 +386,12 @@ func validateAndFillMailDefaults(m MailSettings, env string) (MailSettings, erro
 	if len(m.To) == 0 {
 		m.To = DefaultMailToListForEnv(env)
 	} else {
-		m.To = normalizeList(m.To)
+		// filterValidEmails 確保收件人清單符合基本 email 格式（含括消除隨機换行或包含雙 @ 等無效地址）。
+		// 複用 filterValidEmails 取代 normalizeList，將 mail.To 與 filecheck.mail.To 的驗證規則一致。
+		m.To = filterValidEmails(m.To)
+		if len(m.To) == 0 {
+			m.To = DefaultMailToListForEnv(env)
+		}
 	}
 
 	if strings.TrimSpace(m.Subject) == "" {

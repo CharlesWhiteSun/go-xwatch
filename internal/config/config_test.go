@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -529,6 +530,101 @@ func TestIsPublicEnv_CharlesIsNotPublic(t *testing.T) {
 func TestIsPublicEnv_StagingIsNotPublic(t *testing.T) {
 	if IsPublicEnv("staging") {
 		t.Error("staging 不應為公開環境")
+	}
+}
+
+// ── filterValidEmails（雙 @ 補充測試）──────────────────────────────────────────
+
+func TestFilterValidEmails_AcceptsValidSingleAt(t *testing.T) {
+	in := []string{"user@example.com", "r021@httc.com.tw", "charleswhitesun@gmail.com"}
+	out := filterValidEmails(in)
+	if len(out) != len(in) {
+		t.Fatalf("有效地址應全數保留，輸入 %d 位，輸出 %d 位：%v", len(in), len(out), out)
+	}
+}
+
+func TestFilterValidEmails_RejectsDoubleAt(t *testing.T) {
+	out := filterValidEmails([]string{"r021@@httc.com.tw"})
+	if len(out) != 0 {
+		t.Errorf("含雙 @@ 的地址應被過濾，實際保留 %v", out)
+	}
+}
+
+func TestFilterValidEmails_RejectsEmptyLocalPart(t *testing.T) {
+	out := filterValidEmails([]string{"@domain.com"})
+	if len(out) != 0 {
+		t.Errorf("local part 為空的地址應被過濾，實際保留 %v", out)
+	}
+}
+
+func TestFilterValidEmails_RejectsEmptyDomain(t *testing.T) {
+	out := filterValidEmails([]string{"user@"})
+	if len(out) != 0 {
+		t.Errorf("domain 為空的地址應被過濾，實際保留 %v", out)
+	}
+}
+
+// ── mail.To 的雙 @ 過濾整合測試 ─────────────────────────────────────────────
+
+func TestValidateAndFillMailDefaults_FiltersDoubleAtFromMailTo(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	// mail.To 含雙 @@ 無效地址，應被 filterValidEmails 過濾，有效地址應保留
+	s, err := ValidateAndFillDefaults(Settings{
+		RootDir: filepath.Join(tmp, "root"),
+		Mail: MailSettings{
+			To: []string{"r021@@httc.com.tw", "valid@example.com"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("不應回傳錯誤：%v", err)
+	}
+	for _, addr := range s.Mail.To {
+		if addr == "r021@@httc.com.tw" {
+			t.Errorf("雙 @@ 地址應被過濾，但出現在 mail.To：%v", s.Mail.To)
+		}
+	}
+	found := false
+	for _, addr := range s.Mail.To {
+		if addr == "valid@example.com" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("有效地址 valid@example.com 應保留在 mail.To，實際 %v", s.Mail.To)
+	}
+}
+
+func TestValidateAndFillMailDefaults_AllInvalidToFallsBackToEnvDefault(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	// 若 mail.To 全部無效，應 fallback 到環境預設清單（與 filecheck 行為一致）
+	s, err := ValidateAndFillDefaults(Settings{
+		RootDir: filepath.Join(tmp, "root"),
+		Mail: MailSettings{
+			To: []string{"r021@@httc.com.tw", "@bad.com", "nodomain@"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("不應回傳錯誤：%v", err)
+	}
+	if len(s.Mail.To) == 0 {
+		t.Error("所有 mail.To 無效時，應 fallback 至環境預設清單，mail.To 不應為空")
+	}
+}
+
+func TestDefaultMailToListCharles_ContainsCorrectAddresses(t *testing.T) {
+	for _, addr := range DefaultMailToListCharles {
+		if strings.Count(addr, "@") != 1 {
+			t.Errorf("charles 清單地址 %q 應含且僅含一個 @，實際含 %d 個", addr, strings.Count(addr, "@"))
+		}
+	}
+	if len(DefaultMailToListCharles) != 2 {
+		t.Errorf("charles 清單應有 2 位收件人，實際 %d 位：%v", len(DefaultMailToListCharles), DefaultMailToListCharles)
 	}
 }
 
