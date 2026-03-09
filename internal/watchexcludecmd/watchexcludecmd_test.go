@@ -100,13 +100,15 @@ func TestExtractPasswordFlag_PrefersNewFormat(t *testing.T) {
 	}
 }
 
-func TestExtractPasswordFlag_BackwardCompat_Passwd(t *testing.T) {
-	pw, remaining := extractPasswordFlag([]string{"--passwd", "oldformat", "extra"})
-	if pw != "oldformat" {
-		t.Fatalf("expected 'oldformat', got %q", pw)
+func TestExtractPasswordFlag_PasswdNoLongerRecognized(t *testing.T) {
+	// --passwd 舊格式應已移除，不得被 extractPasswordFlag 識別為密碼旗標
+	pw, remaining := extractPasswordFlag([]string{"--passwd", "should-be-ignored", "extra"})
+	if pw != "" {
+		t.Fatalf("expected empty pw (--passwd no longer supported), got %q", pw)
 	}
-	if len(remaining) != 1 || remaining[0] != "extra" {
-		t.Fatalf("unexpected remaining: %v", remaining)
+	// --passwd 與其値應均保留於 remaining 中，不被吃掉
+	if len(remaining) != 3 {
+		t.Fatalf("expected all 3 args in remaining, got %v", remaining)
 	}
 }
 
@@ -147,19 +149,22 @@ func TestAuthorized_CorrectPassword_DefaultPassword(t *testing.T) {
 	}
 }
 
-func TestAuthorized_BackwardCompat_OldPasswdFlag(t *testing.T) {
+func TestAuthorized_OldPasswdFlagIgnored_PromptFired(t *testing.T) {
+	// --passwd 舊格式已移除：提供 --passwd 時不應被識別為密碼，應經由 PasswordPromptFn
 	setupConfig(t, config.WatchExcludeSettings{})
-	called := false
-	// 舊格式 --passwd 應付向相容
+	prompted := false
+	withMockedPrompt(t, func(string) (string, error) {
+		prompted = true
+		return config.DefaultWatchExcludeRawPassword, nil
+	})
 	err := authorized([]string{"--passwd", config.DefaultWatchExcludeRawPassword}, func(_ []string) error {
-		called = true
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("unexpected error with --passwd: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !called {
-		t.Fatal("fn was not called")
+	if !prompted {
+		t.Fatal("--passwd 已移除，應改由 PasswordPromptFn 讀取密碼")
 	}
 }
 

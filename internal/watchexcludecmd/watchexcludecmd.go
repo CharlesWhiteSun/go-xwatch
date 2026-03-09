@@ -54,9 +54,8 @@ func Run(args []string) error {
 	}
 }
 
-// authorized 從 args 中提取密碼旗標，驗證後以剩餘 args 呼叫 fn。
-// 密碼提取優先順序：--pw（新格式）> --passwd（舊格式，向後相容）。
-// 若兩者皆未提供，會呼叫 PasswordPromptFn 取得互動式隱藏輸入。
+// authorized 從 args 中提取 --pw 旗標，驗證後以剩餘 args 呼叫 fn。
+// 若未提供 --pw，會呼叫 PasswordPromptFn 取得互動式隱藏輸入。
 func authorized(args []string, fn func(remaining []string) error) error {
 	pw, remaining := extractPasswordFlag(args)
 
@@ -78,13 +77,10 @@ func authorized(args []string, fn func(remaining []string) error) error {
 	return fn(remaining)
 }
 
-// extractPasswordFlag 支援 --pw（新格式）與 --passwd（舊格式，向後相容）。
-// 優先採用 --pw；若不存在則嘗試 --passwd，使既有腳本不受旗標更名影響。
+// extractPasswordFlag 從 args 中提取 --pw 旗標的值。
+// 未找到時回傳空字串，呼叫端應退回至互動式 prompt。
 func extractPasswordFlag(args []string) (pw string, remaining []string) {
-	if pw, remaining = extractFlag(args, "pw"); pw != "" {
-		return
-	}
-	return extractFlag(args, "passwd")
+	return extractFlag(args, "pw")
 }
 
 // extractFlag 從 args 中線性搜尋指定名稱的 flag（--name 或 --name=value），
@@ -139,7 +135,7 @@ func setEnabled(enabled bool) error {
 	if err := config.Save(s); err != nil {
 		return err
 	}
-	fmt.Printf("排除功能已%s。服務重啟後生效。\n", boolToVerb(enabled))
+	fmt.Printf("排除功能已%s。設定約 30 秒內自動生效，無需重啟服務。\n", boolToVerb(enabled))
 	return nil
 }
 
@@ -176,7 +172,7 @@ func runAddTo(args []string) error {
 	if err := config.Save(s); err != nil {
 		return err
 	}
-	fmt.Printf("已將 %q 加入排除清單（共 %d 項）。服務重啟後生效。\n", dir, len(s.WatchExclude.Dirs))
+	fmt.Printf("已將 %q 加入排除清單（共 %d 項）。設定約 30 秒內自動生效，無需重啟服務。\n", dir, len(s.WatchExclude.Dirs))
 	return nil
 }
 
@@ -212,7 +208,7 @@ func runSet(args []string) error {
 	if err := config.Save(s); err != nil {
 		return err
 	}
-	fmt.Printf("排除清單已更新（共 %d 項）。服務重啟後生效。\n", len(dirs))
+	fmt.Printf("排除清單已更新（共 %d 項）。設定約 30 秒內自動生效，無需重啟服務。\n", len(dirs))
 	return nil
 }
 
@@ -267,18 +263,17 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("子指令：")
 	fmt.Println("  status                          顯示目前啟用狀態與排除目錄清單")
-	fmt.Println("  enable                          啟用排除功能（服務重啟後生效）")
-	fmt.Println("  disable                         停用排除功能（服務重啟後生效）")
+	fmt.Println("  enable                          啟用排除功能（約 30 秒內自動生效）")
+	fmt.Println("  disable                         停用排除功能（約 30 秒內自動生效）")
 	fmt.Println("  add-to <dir>                    追加目錄至排除清單（不覆蓋現有）")
 	fmt.Println("  set --dirs <dir1,dir2,...>       完整覆寫排除目錄清單")
 	fmt.Println("  passwd [--pw <old>] [--new <new>]  更新管理密碼（省略旗標則互動輸入）")
 	fmt.Println("  help                            顯示本說明")
 	fmt.Println()
-	fmt.Println("授權旗標（passwd 子指令亦適用）：")
-	fmt.Println("  --pw <password>   管理密碼（簡短格式，推薦）")
-	fmt.Println("  --passwd <password>  管理密碼（舊格式，向後相容）")
+	fmt.Println("授權旗標：")
+	fmt.Println("  --pw <password>   管理密碼")
 	fmt.Println()
-	fmt.Println("注意：排除清單變更需重啟服務後才會生效。")
+	fmt.Println("注意：排除清單變更約 30 秒內自動生效，無需重啟服務。")
 }
 
 func boolToStatus(b bool) string {
