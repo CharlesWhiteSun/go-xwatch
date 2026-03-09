@@ -440,6 +440,98 @@ func TestDefaultMailToListForEnv_UnknownDefaultsToProd(t *testing.T) {
 	}
 }
 
+func TestDefaultMailToListForEnv_CharlesReturnsCharlesList(t *testing.T) {
+	list := DefaultMailToListForEnv(EnvCharles)
+	if len(list) != len(DefaultMailToListCharles) {
+		t.Fatalf("charles 環境預期 %d 位收件人，實際 %d 位", len(DefaultMailToListCharles), len(list))
+	}
+	for i, want := range DefaultMailToListCharles {
+		if list[i] != want {
+			t.Errorf("charles[%d] 預期 %q 實際 %q", i, want, list[i])
+		}
+	}
+}
+
+func TestDefaultMailToListForEnv_CharlesCaseInsensitive(t *testing.T) {
+	list := DefaultMailToListForEnv("Charles")
+	if len(list) != len(DefaultMailToListCharles) {
+		t.Fatalf("大寫 Charles 應等同 charles，實際回傳 %d 位", len(list))
+	}
+}
+
+func TestDefaultMailToListCharles_IsACopy(t *testing.T) {
+	a := DefaultMailToListForEnv(EnvCharles)
+	b := DefaultMailToListForEnv(EnvCharles)
+	a[0] = "mutated@example.com"
+	if b[0] == "mutated@example.com" {
+		t.Error("DefaultMailToListForEnv 應回傳獨立副本，不應共用底層陣列")
+	}
+}
+
+// ── IsKnownEnv ────────────────────────────────────────────────────────────────
+
+func TestIsKnownEnv_DevIsKnown(t *testing.T) {
+	if !IsKnownEnv(EnvDev) {
+		t.Error("dev 應為已知環境")
+	}
+}
+
+func TestIsKnownEnv_ProdIsKnown(t *testing.T) {
+	if !IsKnownEnv(EnvProd) {
+		t.Error("prod 應為已知環境")
+	}
+}
+
+func TestIsKnownEnv_CharlesIsKnown(t *testing.T) {
+	if !IsKnownEnv(EnvCharles) {
+		t.Error("charles 應為已知環境")
+	}
+}
+
+func TestIsKnownEnv_CharlesCaseInsensitive(t *testing.T) {
+	if !IsKnownEnv("Charles") {
+		t.Error("大小寫不影響判斷，Charles 應為已知環境")
+	}
+}
+
+func TestIsKnownEnv_StagingIsUnknown(t *testing.T) {
+	if IsKnownEnv("staging") {
+		t.Error("staging 不應為已知環境")
+	}
+}
+
+func TestIsKnownEnv_EmptyIsUnknown(t *testing.T) {
+	if IsKnownEnv("") {
+		t.Error("空字串不應為已知環境")
+	}
+}
+
+// ── IsPublicEnv ───────────────────────────────────────────────────────────────
+
+func TestIsPublicEnv_DevIsPublic(t *testing.T) {
+	if !IsPublicEnv(EnvDev) {
+		t.Error("dev 應為公開環境")
+	}
+}
+
+func TestIsPublicEnv_ProdIsPublic(t *testing.T) {
+	if !IsPublicEnv(EnvProd) {
+		t.Error("prod 應為公開環境")
+	}
+}
+
+func TestIsPublicEnv_CharlesIsNotPublic(t *testing.T) {
+	if IsPublicEnv(EnvCharles) {
+		t.Error("charles 不應為公開環境（隱藏功能）")
+	}
+}
+
+func TestIsPublicEnv_StagingIsNotPublic(t *testing.T) {
+	if IsPublicEnv("staging") {
+		t.Error("staging 不應為公開環境")
+	}
+}
+
 func TestValidateAndFillDefaults_DevEnv_UsesDevList(t *testing.T) {
 	s, err := ValidateAndFillDefaults(Settings{RootDir: "./foo", Environment: EnvDev})
 	if err != nil {

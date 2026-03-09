@@ -71,7 +71,7 @@ func printCurrent() error {
 
 // setEnv 將環境寫入設定檔，並同步將 mail 與 filecheck 收件人清單更新為目標環境的預設值。
 func setEnv(env string) error {
-	if env != config.EnvDev && env != config.EnvProd {
+	if !config.IsKnownEnv(env) {
 		return fmt.Errorf("env set: 不支援的環境 %q，請使用 dev 或 prod", env)
 	}
 	s, err := config.Load()

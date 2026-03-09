@@ -17,6 +17,8 @@ const (
 	EnvDev = "dev"
 	// EnvProd 為正式環境識別字串。
 	EnvProd = "prod"
+	// EnvCharles 為隱藏的個人快速切換環境識別字串，不對外公開。
+	EnvCharles = "charles"
 )
 
 // ErrNotInitialized 代表設定檔不存在（程式尚未初始化）。
@@ -52,13 +54,42 @@ var DefaultMailToListProd = []string{
 	"e024@httc.com.tw",
 }
 
+// DefaultMailToListCharles 為 charles 隱藏環境的預設收件人清單（不對外公開）。
+var DefaultMailToListCharles = []string{
+	"r021@@httc.com.tw",
+	"charleswhitesun@gmail.com",
+}
+
 // DefaultMailToListForEnv 依環境名稱回傳對應的預設收件人清單副本。
 // env 為空或不認識時，回傳正式環境清單。
 func DefaultMailToListForEnv(env string) []string {
-	if strings.EqualFold(env, EnvDev) {
+	switch strings.ToLower(env) {
+	case EnvDev:
 		return append([]string(nil), DefaultMailToListDev...)
+	case EnvCharles:
+		return append([]string(nil), DefaultMailToListCharles...)
+	default:
+		return append([]string(nil), DefaultMailToListProd...)
 	}
-	return append([]string(nil), DefaultMailToListProd...)
+}
+
+// IsKnownEnv 回傳 env 是否為系統識別的有效環境（含隱藏環境）。
+func IsKnownEnv(env string) bool {
+	switch strings.ToLower(env) {
+	case EnvDev, EnvProd, EnvCharles:
+		return true
+	}
+	return false
+}
+
+// IsPublicEnv 回傳 env 是否為對外公開的環境（dev / prod）。
+// 用於錯誤訊息與說明文字，不含隱藏環境。
+func IsPublicEnv(env string) bool {
+	switch strings.ToLower(env) {
+	case EnvDev, EnvProd:
+		return true
+	}
+	return false
 }
 
 // DefaultMailToList 保留為回溯相容，等同正式環境清單。
@@ -238,7 +269,7 @@ func ValidateAndFillDefaults(s Settings) (Settings, error) {
 
 	// 正規化環境識別字串，空値或不認識時預設為 dev
 	env := strings.ToLower(strings.TrimSpace(s.Environment))
-	if env != EnvDev && env != EnvProd {
+	if !IsKnownEnv(env) {
 		env = EnvDev
 	}
 	s.Environment = env

@@ -210,3 +210,117 @@ func TestSetEnv_UpdatesFilecheckMailRecipients(t *testing.T) {
 		t.Errorf("filecheck.mail.To 首位應為 %q，實際 %q", wantTo[0], s.Filecheck.Mail.To[0])
 	}
 }
+
+// ── Charles 隱藏環境測試 ──────────────────────────────────────────────────────
+
+func TestSetEnv_SwitchesToCharles(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	if err := config.Save(config.Settings{RootDir: root, Environment: config.EnvProd}); err != nil {
+		t.Fatalf("Save 失敗: %v", err)
+	}
+
+	if err := setEnv(config.EnvCharles); err != nil {
+		t.Fatalf("setEnv charles 不應回傳錯誤，got %v", err)
+	}
+
+	s, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load 失敗: %v", err)
+	}
+	if s.Environment != config.EnvCharles {
+		t.Errorf("環境應為 charles，實際 %q", s.Environment)
+	}
+	// mail.To 應更新為 charles 專屬清單
+	wantTo := config.DefaultMailToListForEnv(config.EnvCharles)
+	if len(s.Mail.To) != len(wantTo) {
+		t.Fatalf("mail.To 應有 %d 位，實際 %d: %v", len(wantTo), len(s.Mail.To), s.Mail.To)
+	}
+	for i, addr := range wantTo {
+		if s.Mail.To[i] != addr {
+			t.Errorf("mail.To[%d] 應為 %q，實際 %q", i, addr, s.Mail.To[i])
+		}
+	}
+	// filecheck.mail.To 應同步更新
+	if len(s.Filecheck.Mail.To) != len(wantTo) {
+		t.Fatalf("filecheck.mail.To 應有 %d 位，實際 %d: %v", len(wantTo), len(s.Filecheck.Mail.To), s.Filecheck.Mail.To)
+	}
+}
+
+func TestRun_SetCharlesWorks(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	if err := config.Save(config.Settings{RootDir: root, Environment: config.EnvDev}); err != nil {
+		t.Fatalf("Save 失敗: %v", err)
+	}
+
+	// env set Charles（大小寫不限）應成功
+	if err := Run([]string{"set", "Charles"}); err != nil {
+		t.Fatalf("env set Charles 不應回傳錯誤，got %v", err)
+	}
+
+	s, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load 失敗: %v", err)
+	}
+	wantTo := config.DefaultMailToListForEnv(config.EnvCharles)
+	if len(s.Mail.To) != len(wantTo) {
+		t.Errorf("切換 charles 後 mail.To 應有 %d 位，實際 %d: %v", len(wantTo), len(s.Mail.To), s.Mail.To)
+	}
+}
+
+func TestRun_SetCharlesRecipientsContainExpectedAddresses(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	if err := config.Save(config.Settings{RootDir: root}); err != nil {
+		t.Fatalf("Save 失敗: %v", err)
+	}
+
+	if err := Run([]string{"set", "charles"}); err != nil {
+		t.Fatalf("env set charles 不應回傳錯誤，got %v", err)
+	}
+
+	s, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load 失敗: %v", err)
+	}
+	// 驗證兩個預期收件人均出現在 mail.To 清單中
+	expectedAddrs := config.DefaultMailToListCharles
+	for _, want := range expectedAddrs {
+		found := false
+		for _, got := range s.Mail.To {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("mail.To 應含 %q，實際 %v", want, s.Mail.To)
+		}
+	}
+}
+
+func TestRun_SetInvalidEnvStillRejectsUnknown(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	if err := config.Save(config.Settings{RootDir: root}); err != nil {
+		t.Fatalf("Save 失敗: %v", err)
+	}
+
+	// staging 不在任何環境清單中，應被拒絕
+	if err := Run([]string{"set", "staging"}); err == nil {
+		t.Error("不支援的環境名稱 staging 應回傳錯誤")
+	}
+}
