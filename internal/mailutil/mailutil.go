@@ -119,6 +119,31 @@ func NormalizeList(values []string) []string {
 	return out
 }
 
+// SplitValidInvalidEmails 將收件人清單拆分為格式有效與無效兩組。
+// 有效條件：
+//   - 恰好包含一個 @ 符號
+//   - @ 左側與右側均非空
+//   - 不含空格、角括號、方括號、圓括號等特殊字元
+//
+// 輸入會先去除前後空白；輸入為空白的項目會直接略過（不列入 invalid）。
+func SplitValidInvalidEmails(addrs []string) (valid []string, invalid []string) {
+	for _, a := range addrs {
+		trimmed := strings.TrimSpace(a)
+		if trimmed == "" {
+			continue
+		}
+		at := strings.Index(trimmed, "@")
+		if at > 0 && at < len(trimmed)-1 &&
+			strings.Count(trimmed, "@") == 1 &&
+			!strings.ContainsAny(trimmed, " []()<>") {
+			valid = append(valid, trimmed)
+		} else {
+			invalid = append(invalid, trimmed)
+		}
+	}
+	return
+}
+
 // PrepareBody 依日誌是否存在產生郵件內文，回傳 (body, attachmentMissing)。
 // 若日誌不存在且模板為空，回傳 missingBody；模板非空則在末尾加注「未附檔」說明。
 func PrepareBody(logPath string, day string, template string, defaultBody string, missingBody string) (string, bool) {

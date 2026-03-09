@@ -163,10 +163,15 @@ func sendFilecheckMail(ctx context.Context, logger *slog.Logger, s config.Settin
 	fc := s.Filecheck
 	mail := s.Mail
 
-	recipients := mailutil.NormalizeList(fc.Mail.To)
-	if len(recipients) == 0 {
+	normalizedTo := mailutil.NormalizeList(fc.Mail.To)
+	valid, invalid := mailutil.SplitValidInvalidEmails(normalizedTo)
+	for _, addr := range invalid {
+		logger.Warn(fmt.Sprintf("filecheck 收件人格式無效，已略過：%s", addr))
+	}
+	if len(valid) == 0 {
 		return fmt.Errorf("沒有有效的收件人")
 	}
+	recipients := valid
 
 	targetDay := now.In(loc).AddDate(0, 0, -1)
 	dayStr := targetDay.Format("2006-01-02")

@@ -108,10 +108,16 @@ func sendDailyMail(ctx context.Context, logger *slog.Logger, mail config.MailSet
 	logPath := filepath.Join(logDir, fmt.Sprintf("watch_%s.log", dayStr))
 	subject, body, attachmentMissing := mailutil.BuildMailContent(rootDirName, dayStr, logPath, sendModeScheduled, false)
 
-	recipients := mailutil.NormalizeList(mail.To)
-	if len(recipients) == 0 {
+	normalized := mailutil.NormalizeList(mail.To)
+	valid, invalid := mailutil.SplitValidInvalidEmails(normalized)
+	for _, addr := range invalid {
+		logger.Warn(fmt.Sprintf("收件人格式無效，已略過：%s", addr))
+		_ = mailutil.WriteMailLog(mailLogDir, now, "skip", dayStr, []string{addr}, "", "", "收件人格式無效")
+	}
+	if len(valid) == 0 {
 		return errors.New("沒有有效的收件人")
 	}
+	recipients := valid
 
 	cfg := mailutil.ResolveSMTPConfig(mail, recipients)
 	opts := mailer.ReportOptions{

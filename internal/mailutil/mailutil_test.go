@@ -575,3 +575,76 @@ func TestResolveLogDirForDataDir_WhitespaceConfig_TreatedAsEmpty(t *testing.T) {
 		t.Errorf("空白字串 configPath 應視為空：期望 %q，實際 %q", want, got)
 	}
 }
+
+// ── SplitValidInvalidEmails ───────────────────────────────────────────────────
+
+func TestSplitValidInvalidEmails_AllValid(t *testing.T) {
+	input := []string{"alice@example.com", "bob@httc.com.tw", "carol@sub.domain.org"}
+	valid, invalid := mailutil.SplitValidInvalidEmails(input)
+	if len(valid) != 3 {
+		t.Errorf("期望 3 筆有效，實際 %d", len(valid))
+	}
+	if len(invalid) != 0 {
+		t.Errorf("期望 0 筆無效，實際 %d：%v", len(invalid), invalid)
+	}
+}
+
+func TestSplitValidInvalidEmails_AllInvalid(t *testing.T) {
+	input := []string{"noatsign", "double@@at.com", "space @example.com", "bracket<@example.com"}
+	valid, invalid := mailutil.SplitValidInvalidEmails(input)
+	if len(valid) != 0 {
+		t.Errorf("期望 0 筆有效，實際 %d：%v", len(valid), valid)
+	}
+	if len(invalid) != 4 {
+		t.Errorf("期望 4 筆無效，實際 %d", len(invalid))
+	}
+}
+
+func TestSplitValidInvalidEmails_Mixed(t *testing.T) {
+	input := []string{"good@example.com", "r021@@httc.com.tw", "bad", "another@valid.org"}
+	valid, invalid := mailutil.SplitValidInvalidEmails(input)
+	if len(valid) != 2 {
+		t.Errorf("期望 2 筆有效，實際 %d", len(valid))
+	}
+	if len(invalid) != 2 {
+		t.Errorf("期望 2 筆無效，實際 %d", len(invalid))
+	}
+	if valid[0] != "good@example.com" || valid[1] != "another@valid.org" {
+		t.Errorf("有效清單順序或內容有誤：%v", valid)
+	}
+}
+
+func TestSplitValidInvalidEmails_EmptyAndWhitespace(t *testing.T) {
+	input := []string{"", "   ", "valid@example.com"}
+	valid, invalid := mailutil.SplitValidInvalidEmails(input)
+	if len(valid) != 1 {
+		t.Errorf("期望 1 筆有效，實際 %d", len(valid))
+	}
+	if len(invalid) != 0 {
+		t.Errorf("空白項目不應列入 invalid，實際 %d：%v", len(invalid), invalid)
+	}
+}
+
+func TestSplitValidInvalidEmails_AtEdgeCases(t *testing.T) {
+	// @ 在開頭或結尾均應視為無效
+	input := []string{"@nodomain", "nolocal@", "x@y"}
+	valid, invalid := mailutil.SplitValidInvalidEmails(input)
+	// "@nodomain" and "nolocal@" are invalid; "x@y" is valid (minimal)
+	if len(valid) != 1 {
+		t.Errorf("期望 1 筆有效（x@y），實際 %d：%v", len(valid), valid)
+	}
+	if len(invalid) != 2 {
+		t.Errorf("期望 2 筆無效，實際 %d：%v", len(invalid), invalid)
+	}
+}
+
+func TestSplitValidInvalidEmails_SpecialChars(t *testing.T) {
+	input := []string{"user[]@example.com", "user()@domain", "user<>@x.com", "ok@example.com"}
+	valid, invalid := mailutil.SplitValidInvalidEmails(input)
+	if len(valid) != 1 || valid[0] != "ok@example.com" {
+		t.Errorf("只有 ok@example.com 應有效，實際 valid=%v", valid)
+	}
+	if len(invalid) != 3 {
+		t.Errorf("期望 3 筆含特殊字元地址為無效，實際 %d", len(invalid))
+	}
+}

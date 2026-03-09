@@ -16,6 +16,7 @@ import (
 	"go-xwatch/internal/config"
 	"go-xwatch/internal/filecheck"
 	"go-xwatch/internal/mailer"
+	"go-xwatch/internal/mailutil"
 )
 
 // Run 展開 filecheck 子指令，委派至 Runner.Run（能後相容包裝）。
@@ -204,9 +205,14 @@ func mailSendWithSender(args []string, sender TextMailSender) error {
 		}
 		recipients = list
 	}
-	if len(recipients) == 0 {
+	validRecipients, invalidRecipients := mailutil.SplitValidInvalidEmails(recipients)
+	for _, addr := range invalidRecipients {
+		fmt.Printf("警告：收件人格式有誤，已略過：%s\n", addr)
+	}
+	if len(validRecipients) == 0 {
 		return errors.New("未設定收件人，請先執行 'filecheck mail enable --to <email>' 或使用 --to 指定")
 	}
+	recipients = validRecipients
 
 	// 揃描前一日的 laravel-{YYYY-MM-DD}.log 檔案（有無均寄）
 	scanDir := filecheck.ResolveScanDir(settings.RootDir, settings.Filecheck.ScanDir)

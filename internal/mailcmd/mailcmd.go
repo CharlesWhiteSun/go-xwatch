@@ -221,10 +221,15 @@ func sendWithSender(args []string, sender GmailSender) error {
 		body = v
 	}
 
-	recipients := mailutil.NormalizeList(mail.To)
-	if len(recipients) == 0 {
+	valid, invalid := mailutil.SplitValidInvalidEmails(mailutil.NormalizeList(mail.To))
+	for _, addr := range invalid {
+		fmt.Printf("警告：收件人格式有誤，已略過：%s\n", addr)
+		_ = mailutil.WriteMailLog(mailLogDir, time.Now(), "skip", dayStr, []string{addr}, "", "", "收件人格式無效")
+	}
+	if len(valid) == 0 {
 		return errors.New("請提供收件人 (config 或 --to)")
 	}
+	recipients := valid
 
 	host := normalizeHost(mail.SMTPHost)
 	port := normalizePort(mail.SMTPPort)
