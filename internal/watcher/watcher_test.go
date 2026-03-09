@@ -292,3 +292,225 @@ func TestShouldSkipFn_NilIsNoOp(t *testing.T) {
 		}
 	}
 }
+
+// buildTestSkipFn 依 excludedDir 建立路徑比對的排除函式，與 runner.buildExcludeSkipFn 邏輯相同。
+func buildTestSkipFn(excludedDir string) func(string) bool {
+	excl := strings.ToLower(filepath.ToSlash(excludedDir))
+	return func(path string) bool {
+		clean := strings.ToLower(filepath.ToSlash(path))
+		return clean == excl || strings.HasPrefix(clean, excl+"/")
+	}
+}
+
+// TestShouldSkipFn_ExcludedDirNotExistAtStart
+// 確認排除目錄「啟動時尚不存在」的場景：
+// watcher 啟動後使用者才建立排除目錄，其內部的檔案事件不應被回報。
+func TestShouldSkipFn_ExcludedDirNotExistAtStart(t *testing.T) {
+	tmp := t.TempDir()
+	excludedDir := filepath.Join(tmp, "storage")
+	// 注意：exclusedDir 在 watcher 啟動時尚未建立
+
+	received := make(chan string, 20)
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- RunWithOptions(ctx, tmp, Options{
+			Logger:       slog.Default(),
+			OnEvent:      func(e Event) { received <- e.Path },
+			ShouldSkipFn: buildTestSkipFn(excludedDir),
+		})
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// 建立排除目錄（此 CREATE 事件本身應被略過）
+	if err := os.MkdirAll(excludedDir, 0o755); err != nil {
+		t.Fatalf("mkdir excluded dir failed: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// 在排除目錄內寫入檔案 — 不應收到事件
+	os.WriteFile(filepath.Join(excludedDir, "secret.txt"), []byte("x"), 0o644)
+	time.Sleep(100 * time.Millisecond)
+
+	// 建立允許目錄的檔案 — 應收到事件，用於確認 watcher 仍在運作
+	allowedFile := filepath.Join(tmp, "ok.txt")
+	os.WriteFile(allowedFile, []byte("hello"), 0o644)
+
+	exclLower := strings.ToLower(filepath.ToSlash(excludedDir))
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case got := <-received:
+			gotLower := strings.ToLower(filepath.ToSlash(got))
+			if gotLower == exclLower || strings.HasPrefix(gotLower, exclLower+"/") {
+				cancel()
+				<-errCh
+				t.Fatalf("不應收到排除目錄的事件（dir not exist at start）：%q", got)
+			}
+			if filepath.Clean(got) == filepath.Clean(allowedFile) {
+				cancel()
+				<-errCh
+				return // success
+			}
+		case <-deadline:
+			cancel()
+			<-errCh
+			t.Fatal("timeout: 未收到允許目錄的事件（watcher 可能未正常啟動）")
+		}
+	}
+}
+
+// TestShouldSkipFn_ExcludedDirDeletedAndRecreated
+// 確認排除目錄「被刪除再重新建立」的場景：
+// watcher 啟動後，排除目錄存在 → 被刪除 → 再次被建立，期間不應有其內部事件被回報。
+func TestShouldSkipFn_ExcludedDirDeletedAndRecreated(t *testing.T) {
+	tmp := t.TempDir()
+	excludedDir := filepath.Join(tmp, "storage")
+	// 啟動時已存在
+	if err := os.MkdirAll(excludedDir, 0o755); err != nil {
+		t.Fatalf("mkdir excluded dir failed: %v", err)
+	}
+
+	received := make(chan string, 20)
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- RunWithOptions(ctx, tmp, Options{
+			Logger:       slog.Default(),
+			OnEvent:      func(e Event) { received <- e.Path },
+			ShouldSkipFn: buildTestSkipFn(excludedDir),
+		})
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// 刪除排除目錄
+	if err := os.RemoveAll(excludedDir); err != nil {
+		t.Fatalf("remove excluded dir failed: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// 重新建立排除目錄
+	if err := os.MkdirAll(excludedDir, 0o755); err != nil {
+		t.Fatalf("re-mkdir excluded dir failed: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// 在重建後的排除目錄內寫入檔案 — 不應收到事件
+	os.WriteFile(filepath.Join(excludedDir, "after_recreate.txt"), []byte("x"), 0o644)
+	time.Sleep(100 * time.Millisecond)
+
+	// 建立允許目錄的檔案確認 watcher 正常
+	allowedFile := filepath.Join(tmp, "ok2.txt")
+	os.WriteFile(allowedFile, []byte("world"), 0o644)
+
+	exclLower := strings.ToLower(filepath.ToSlash(excludedDir))
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case got := <-received:
+			gotLower := strings.ToLower(filepath.ToSlash(got))
+			if gotLower == exclLower || strings.HasPrefix(gotLower, exclLower+"/") {
+				cancel()
+				<-errCh
+				t.Fatalf("不應收到排除目錄的事件（deleted and recreated）：%q", got)
+			}
+			if filepath.Clean(got) == filepath.Clean(allowedFile) {
+				cancel()
+				<-errCh
+				return // success
+			}
+		case <-deadline:
+			cancel()
+			<-errCh
+			t.Fatal("timeout: 未收到允許目錄的事件")
+		}
+	}
+}
+
+// ── addRecursive 錯誤處理測試 ─────────────────────────────────────────────
+
+// addMock 實作 watchAdder 介面，記錄所有 Add 呼叫。
+type addMock struct {
+	added []string
+}
+
+func (m *addMock) Add(path string) error {
+	m.added = append(m.added, filepath.ToSlash(strings.ToLower(path)))
+	return nil
+}
+
+// TestAddRecursive_AddsAllDirs 驗證 addRecursive 在無錯誤時正確遍歷並 Add 所有目錄。
+func TestAddRecursive_AddsAllDirs(t *testing.T) {
+	tmp := t.TempDir()
+	os.MkdirAll(filepath.Join(tmp, "a"), 0o755)
+	os.MkdirAll(filepath.Join(tmp, "b"), 0o755)
+
+	mock := &addMock{}
+	noSkip := func(string) bool { return false }
+	if err := addRecursive(mock, tmp, noSkip); err != nil {
+		t.Fatalf("addRecursive should not error: %v", err)
+	}
+
+	want := map[string]bool{
+		filepath.ToSlash(strings.ToLower(tmp)):                     true,
+		filepath.ToSlash(strings.ToLower(filepath.Join(tmp, "a"))): true,
+		filepath.ToSlash(strings.ToLower(filepath.Join(tmp, "b"))): true,
+	}
+	got := make(map[string]bool, len(mock.added))
+	for _, p := range mock.added {
+		got[p] = true
+	}
+	for k := range want {
+		if !got[k] {
+			t.Errorf("期望 Add(%q) 被呼叫，但未呼叫", k)
+		}
+	}
+}
+
+// TestAddRecursive_SkipsExcludedDir 驗證 skipFn 回傳 true 時整個目錄樹被略過。
+func TestAddRecursive_SkipsExcludedDir(t *testing.T) {
+	tmp := t.TempDir()
+	os.MkdirAll(filepath.Join(tmp, "storage", "sub"), 0o755)
+	os.MkdirAll(filepath.Join(tmp, "ok"), 0o755)
+
+	skipStorage := func(path string) bool {
+		clean := filepath.ToSlash(strings.ToLower(path))
+		target := filepath.ToSlash(strings.ToLower(filepath.Join(tmp, "storage")))
+		return clean == target || strings.HasPrefix(clean, target+"/")
+	}
+	mock := &addMock{}
+	if err := addRecursive(mock, tmp, skipStorage); err != nil {
+		t.Fatalf("addRecursive error: %v", err)
+	}
+
+	storageKey := filepath.ToSlash(strings.ToLower(filepath.Join(tmp, "storage")))
+	for _, p := range mock.added {
+		if p == storageKey || strings.HasPrefix(p, storageKey+"/") {
+			t.Errorf("排除目錄不應被 Add：%q", p)
+		}
+	}
+	okKey := filepath.ToSlash(strings.ToLower(filepath.Join(tmp, "ok")))
+	found := false
+	for _, p := range mock.added {
+		if p == okKey {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("允許的目錄 ok 應被 Add")
+	}
+}
+
+// TestAddRecursive_RootError 驗證根目錄不存在時回傳錯誤。
+func TestAddRecursive_RootError(t *testing.T) {
+	mock := &addMock{}
+	noSkip := func(string) bool { return false }
+	err := addRecursive(mock, "/nonexistent/path/that/does/not/exist", noSkip)
+	if err == nil {
+		t.Fatal("根目錄不存在時應回傳錯誤")
+	}
+}
