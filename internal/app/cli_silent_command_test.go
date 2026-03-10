@@ -8,11 +8,19 @@ import (
 
 // ── isSilentCommand 單元測試 ─────────────────────────────────────────────
 
-// TestIsSilentCommand_WatchExclude_ReturnsTrue
-// 確認 watchexclude 被判定為靜默指令。
-func TestIsSilentCommand_WatchExclude_ReturnsTrue(t *testing.T) {
-	if !isSilentCommand("watchexclude") {
-		t.Error("watchexclude 應為靜默指令，但 isSilentCommand 回傳 false")
+// TestIsSilentCommand_Whitelist_ReturnsTrue
+// 確認 whitelist 被判定為靜默指令。
+func TestIsSilentCommand_Whitelist_ReturnsTrue(t *testing.T) {
+	if !isSilentCommand("whitelist") {
+		t.Error("whitelist 應為靜默指令，但 isSilentCommand 回傳 false")
+	}
+}
+
+// TestIsSilentCommand_WatchExclude_NoLongerSilent
+// 確認 watchexclude 舊命名已不再被判定為靜默指令。
+func TestIsSilentCommand_WatchExclude_NoLongerSilent(t *testing.T) {
+	if isSilentCommand("watchexclude") {
+		t.Error("watchexclude 舊命名應已移除，不应再為靜默指令")
 	}
 }
 
@@ -28,25 +36,25 @@ func TestIsSilentCommand_RegularCommands_ReturnsFalse(t *testing.T) {
 
 // ── runInteractive 靜默指令不記錄 command log ─────────────────────────
 
-// TestRunInteractive_WatchExclude_DoesNotLogCommand
-// 確認執行 watchexclude 時，runInteractive 不寫入 "command" ops log。
-func TestRunInteractive_WatchExclude_DoesNotLogCommand(t *testing.T) {
+// TestRunInteractive_Whitelist_DoesNotLogCommand
+// 確認執行 whitelist 時，runInteractive 不寫入 "command" ops log。
+func TestRunInteractive_Whitelist_DoesNotLogCommand(t *testing.T) {
 	setupMinimalCLIConfig(t)
 	t.Setenv("XWATCH_NO_PAUSE", "1")
 
 	ml := &mockLogger{}
 	app := &cliApp{serviceName: "GoXWatch", opsLogger: ml}
 
-	// 注入 watchexclude 指令（帶密碼以通過驗證；或直接觸發 unknown subcommand，
+	// 注入 whitelist 指令（帶密碼以通過驗證；或直接觸發 unknown subcommand，
 	// 此測試目的是驗證日誌行為，回傳錯誤本身不影響斷言）
 	t.Setenv("os_args_override", "")
 	origArgs := append([]string(nil), _testOsArgs...)
-	setTestArgs(t, "watchexclude")
+	setTestArgs(t, "whitelist")
 
 	_ = app.runInteractive()
 
 	if ml.hasMsg("command") {
-		t.Error("watchexclude 執行後不應有 'command' ops log 記錄")
+		t.Error("whitelist 執行後不應有 'command' ops log 記錄")
 	}
 	_ = origArgs
 }
@@ -76,17 +84,17 @@ func TestRunInteractive_RegularCommand_LogsCommand(t *testing.T) {
 	}
 }
 
-// TestRunInteractive_WatchExclude_SetsLastCommandSilent
-// 確認執行 watchexclude 後，lastCommandSilent 欄位為 true。
-func TestRunInteractive_WatchExclude_SetsLastCommandSilent(t *testing.T) {
+// TestRunInteractive_Whitelist_SetsLastCommandSilent
+// 確認執行 whitelist 後，lastCommandSilent 欄位為 true。
+func TestRunInteractive_Whitelist_SetsLastCommandSilent(t *testing.T) {
 	setupMinimalCLIConfig(t)
 	app := &cliApp{serviceName: "GoXWatch"}
 
-	setTestArgs(t, "watchexclude")
+	setTestArgs(t, "whitelist")
 	_ = app.runInteractive()
 
 	if !app.lastCommandSilent {
-		t.Error("執行 watchexclude 後 lastCommandSilent 應為 true，但為 false")
+		t.Error("執行 whitelist 後 lastCommandSilent 應為 true，但為 false")
 	}
 }
 
@@ -110,13 +118,13 @@ func TestRunInteractive_RegularCommand_LastCommandSilentFalse(t *testing.T) {
 
 // ── cli start log 靜默抑制測試 ───────────────────────────────────────
 
-// TestCliStart_WatchExclude_NoStartLog
-// 確認當第一個 arg 為 watchexclude 時，"cli start" 不被寫入 ops log。
-func TestCliStart_WatchExclude_NoStartLog(t *testing.T) {
+// TestCliStart_Whitelist_NoStartLog
+// 確認當第一個 arg 為 whitelist 時，"cli start" 不被寫入 ops log。
+func TestCliStart_Whitelist_NoStartLog(t *testing.T) {
 	ml := &mockLogger{}
 	app := &cliApp{serviceName: "GoXWatch", opsLogger: ml}
 
-	setTestArgs(t, "watchexclude")
+	setTestArgs(t, "whitelist")
 	// 只測試靜默判斷邏輯：模擬 run() 開頭的條件判斷
 	firstArg := ""
 	if len(_testCurrentArgs) > 1 && len(_testCurrentArgs[1]) > 0 {
@@ -127,7 +135,7 @@ func TestCliStart_WatchExclude_NoStartLog(t *testing.T) {
 	}
 
 	if ml.hasMsg("cli start") {
-		t.Error("watchexclude 指令時不應寫入 'cli start' ops log")
+		t.Error("whitelist 指令時不應寫入 'cli start' ops log")
 	}
 }
 
@@ -153,9 +161,9 @@ func TestCliStart_RegularCommand_LogsStart(t *testing.T) {
 
 // ── command ok/error 靜默抑制測試 ────────────────────────────────────
 
-// TestCommandOkLog_WatchExclude_NotLogged
+// TestCommandOkLog_SilentCommand_NotLogged
 // 確認 lastCommandSilent=true 時，不寫入 "command ok" ops log。
-func TestCommandOkLog_WatchExclude_NotLogged(t *testing.T) {
+func TestCommandOkLog_SilentCommand_NotLogged(t *testing.T) {
 	ml := &mockLogger{}
 	app := &cliApp{serviceName: "GoXWatch", opsLogger: ml, lastCommandSilent: true}
 	if !app.lastCommandSilent {
@@ -179,9 +187,9 @@ func TestCommandOkLog_RegularCommand_IsLogged(t *testing.T) {
 	}
 }
 
-// TestCommandErrorLog_WatchExclude_NotLogged
+// TestCommandErrorLog_SilentCommand_NotLogged
 // 確認 lastCommandSilent=true 時，不寫入 "command error" ops log。
-func TestCommandErrorLog_WatchExclude_NotLogged(t *testing.T) {
+func TestCommandErrorLog_SilentCommand_NotLogged(t *testing.T) {
 	ml := &mockLogger{}
 	app := &cliApp{serviceName: "GoXWatch", opsLogger: ml, lastCommandSilent: true}
 	if !app.lastCommandSilent {

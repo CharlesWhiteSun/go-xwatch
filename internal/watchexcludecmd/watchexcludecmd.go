@@ -13,10 +13,10 @@ import (
 	"go-xwatch/internal/config"
 )
 
-// Run 是隱藏指令 watchexclude 的入口函式。
+// Run 是隱藏指令 whitelist 的入口函式。
 func Run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("watchexclude: 請指定子指令（status/enable/disable/add-to/set/passwd/help）")
+		return errors.New("whitelist: 請指定子指令（status/enable/disable/add-to/set/passwd/help）")
 	}
 	sub := strings.ToLower(args[0])
 	rest := args[1:]
@@ -50,7 +50,7 @@ func Run(args []string) error {
 	case "passwd":
 		return runPasswd(rest)
 	default:
-		return fmt.Errorf("watchexclude: 未知子指令 %q", sub)
+		return fmt.Errorf("whitelist: 未知子指令 %q", sub)
 	}
 }
 
@@ -142,7 +142,7 @@ func setEnabled(enabled bool) error {
 // runAddTo 將單一目錄名稱追加到排除清單（自動去重）。
 // 可透過 --to <dir> 旗標或直接使用第一個位置參數指定目錄名稱。
 func runAddTo(args []string) error {
-	fs := flag.NewFlagSet("watchexclude add-to", flag.ContinueOnError)
+	fs := flag.NewFlagSet("whitelist add-to", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	toFlag := fs.String("to", "", "目錄名稱（相對 rootDir 或絕對路徑）")
 	if err := fs.Parse(args); err != nil {
@@ -178,7 +178,7 @@ func runAddTo(args []string) error {
 
 // runSet 以逗號分隔的清單完整覆寫排除目錄清單。
 func runSet(args []string) error {
-	fs := flag.NewFlagSet("watchexclude set", flag.ContinueOnError)
+	fs := flag.NewFlagSet("whitelist set", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	dirsFlag := fs.String("dirs", "", "以逗號分隔的目錄名稱清單（覆寫現有清單）")
 	if err := fs.Parse(args); err != nil {
@@ -258,7 +258,7 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("監控目錄排除清單管理")
 	fmt.Println()
-	fmt.Println("用法：watchexclude <subcommand> --pw <password> [flags]")
+	fmt.Println("用法：whitelist <subcommand> --pw <password> [flags]")
 	fmt.Println("      若省略 --pw，將以互動方式提示輸入密碼（不顯示輸入內容）")
 	fmt.Println()
 	fmt.Println("子指令：")

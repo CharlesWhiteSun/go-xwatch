@@ -71,7 +71,7 @@ type cliApp struct {
 }
 
 func (c *cliApp) run() int {
-	// 靜默指令（如 watchexclude）不寫入任何 ops log，包含啟動紀錄。
+	// 靜默指令（如 whitelist）不寫入任何 ops log，包含啟動紀錄。
 	firstArg := ""
 	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
 		firstArg = strings.ToLower(os.Args[1])
@@ -184,7 +184,7 @@ func (c *cliApp) run() int {
 // 靜默指令係為特殊隱藏功能設計，不應留下任何追蹤紀錄。
 func isSilentCommand(command string) bool {
 	switch command {
-	case "watchexclude":
+	case "whitelist":
 		return true
 	}
 	return false
@@ -350,7 +350,7 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 	}})
 
 	// 隱藏後台管理指令，不出現於 printUsage 或任何操作說明中。
-	reg.Register(cli.CommandFunc{CommandName: "watchexclude", Fn: func(args []string) error {
+	reg.Register(cli.CommandFunc{CommandName: "whitelist", Fn: func(args []string) error {
 		return watchexcludecmd.Run(args)
 	}})
 
