@@ -19,9 +19,10 @@ func TestBuildCommandRegistry_ClearRegistered(t *testing.T) {
 	}
 }
 
-// TestPrintUsage_ContainsClear
-// 確認 printUsage 的輸出中包含 "clear" 指令說明。
-func TestPrintUsage_ContainsClear(t *testing.T) {
+// TestPrintUsage_NotContainsClear
+// 確認 printUsage 的輸出中不列出 "clear" 指令說明（隱藏指令，不展示於主畫面）。
+// 注意：clear 指令本身仍可正常執行，只是不出現於使用說明中。
+func TestPrintUsage_NotContainsClear(t *testing.T) {
 	// 截取 stdout
 	orig := os.Stdout
 	r, w, err := os.Pipe()
@@ -42,8 +43,8 @@ func TestPrintUsage_ContainsClear(t *testing.T) {
 	}
 	out := buf.String()
 
-	if !strings.Contains(out, "clear") {
-		t.Errorf("printUsage 輸出應包含 'clear' 指令，實際輸出：\n%s", out)
+	if strings.Contains(out, "  clear") {
+		t.Errorf("printUsage 輸出不應包含 'clear' 指令說明，實際輸出：\n%s", out)
 	}
 }
 
