@@ -253,16 +253,17 @@ func TestRunCommand_NotRegistered(t *testing.T) {
 	}
 }
 
-// TestClearPurgeWipe_NotRegistered 確認 clear / purge / wipe 頂層指令已移除。
+// TestClearPurgeWipe_NotRegistered 確認 purge / wipe 等危險頂層指令未被意外註冊。
+// 注意：clear 已作為終端清除功能正式加入，不在此列。
 func TestClearPurgeWipe_NotRegistered(t *testing.T) {
 	app := &cliApp{
 		serviceName:        "GoXWatch",
 		serviceInstalledFn: func(_ string) bool { return true },
 	}
 	reg := app.buildCommandRegistry()
-	for _, name := range []string{"clear", "purge", "wipe"} {
+	for _, name := range []string{"purge", "wipe"} {
 		if _, ok := reg.Get(name); ok {
-			t.Errorf("指令 %q 應已移除，但指令表中仍存在", name)
+			t.Errorf("指令 %q 應未被註冊，但指令表中仍存在", name)
 		}
 	}
 }

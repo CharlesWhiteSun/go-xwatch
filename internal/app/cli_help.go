@@ -26,6 +26,7 @@ func (c *cliApp) printUsage() {
 	fmt.Fprintln(w, "  heartbeat [help] <subcommand>\t管理心跳測試")
 	fmt.Fprintln(w, "  filecheck [help] <subcommand>\t監控指定目錄內的檔案存在性")
 	fmt.Fprintln(w, "  env [help] [set dev|prod]\t切換執行環境")
+	fmt.Fprintln(w, "  clear\t清除終端機畫面")
 	_ = w.Flush()
 	fmt.Println("============================================================")
 }

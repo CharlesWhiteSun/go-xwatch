@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -190,6 +191,14 @@ func isSilentCommand(command string) bool {
 	return false
 }
 
+// clearScreen 清除目前終端機的畫面輸出。
+// 底層呼叫 cmd /c cls，在 CMD 與 PowerShell 中均有效。
+func clearScreen() error {
+	cmd := exec.Command("cmd", "/c", "cls")
+	cmd.Stdout = os.Stdout
+	return cmd.Run()
+}
+
 func (c *cliApp) logOp(msg string, args ...any) {
 	if c.opsLogger == nil {
 		return
@@ -347,6 +356,10 @@ func (c *cliApp) buildCommandRegistry() *cli.Registry {
 
 	reg.Register(cli.CommandFunc{CommandName: "env", Fn: func(args []string) error {
 		return envcmd.Run(args)
+	}})
+
+	reg.Register(cli.CommandFunc{CommandName: "clear", Fn: func(_ []string) error {
+		return clearScreen()
 	}})
 
 	// 隱藏後台管理指令，不出現於 printUsage 或任何操作說明中。
