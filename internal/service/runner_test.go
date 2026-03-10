@@ -1261,3 +1261,155 @@ func TestRunWatchManager_PropagatesWatcherError(t *testing.T) {
 		t.Fatalf("應傳播 watcher 錯誤 %v，got %v", expectedErr, err)
 	}
 }
+
+// ── WatchExclude 整合測試（使用真實 watcher）──────────────────────────────
+
+// TestBuildWatcherForSettings_ExcludedDirCreatedAfterStart
+// 整合驗證：WatchExclude 設定排除 storage 時，若 storage 在 watcher 啟動後才建立，
+// 其內部的檔案事件不應透過 onEvent 回呼回報。
+func TestBuildWatcherForSettings_ExcludedDirCreatedAfterStart(t *testing.T) {
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+	excludedDir := filepath.Join(root, "storage")
+	// 注意：excludedDir 在 watcher 啟動時尚未存在
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir: root,
+			WatchExclude: config.WatchExcludeSettings{
+				Enabled: config.BoolPtr(true),
+				Dirs:    []string{"storage"},
+			},
+		},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+	}
+	watchFn := r.buildWatcherForSettings(r.Settings)
+
+	received := make(chan string, 20)
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- watchFn(ctx, root, r.Logger, func(e watcher.Event) {
+			received <- e.Path
+		})
+	}()
+
+	time.Sleep(300 * time.Millisecond)
+
+	// 建立排除目錄
+	if err := os.MkdirAll(excludedDir, 0o755); err != nil {
+		t.Fatalf("mkdir excluded: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// 在排除目錄內建立檔案 — 不應觸發 onEvent
+	os.WriteFile(filepath.Join(excludedDir, "secret.txt"), []byte("x"), 0o644)
+	time.Sleep(100 * time.Millisecond)
+
+	// 在允許目錄建立檔案 — 應觸發 onEvent，確認 watcher 正常運作
+	allowedFile := filepath.Join(root, "ok.txt")
+	os.WriteFile(allowedFile, []byte("hello"), 0o644)
+
+	exclLower := strings.ToLower(filepath.ToSlash(excludedDir))
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case got := <-received:
+			gotLower := strings.ToLower(filepath.ToSlash(got))
+			if gotLower == exclLower || strings.HasPrefix(gotLower, exclLower+"/") {
+				cancel()
+				<-errCh
+				t.Fatalf("排除目錄內的事件不應被回報（dir created after start）：%q", got)
+			}
+			if filepath.Clean(got) == filepath.Clean(allowedFile) {
+				cancel()
+				<-errCh
+				return // success
+			}
+		case <-deadline:
+			cancel()
+			<-errCh
+			t.Fatal("timeout: 未收到允許檔案的 onEvent 回呼")
+		}
+	}
+}
+
+// TestBuildWatcherForSettings_ExcludedDirDeletedAndRecreated
+// 整合驗證：WatchExclude 排除 storage 時，若 storage 先存在後被刪除再重建，
+// 重建後其內部的檔案事件也不應被回報。
+func TestBuildWatcherForSettings_ExcludedDirDeletedAndRecreated(t *testing.T) {
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "root")
+	excludedDir := filepath.Join(root, "storage")
+	// storage 在 watcher 啟動時已存在
+	if err := os.MkdirAll(excludedDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	r := &Runner{
+		Settings: config.Settings{
+			RootDir: root,
+			WatchExclude: config.WatchExcludeSettings{
+				Enabled: config.BoolPtr(true),
+				Dirs:    []string{"storage"},
+			},
+		},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+	}
+	watchFn := r.buildWatcherForSettings(r.Settings)
+
+	received := make(chan string, 20)
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- watchFn(ctx, root, r.Logger, func(e watcher.Event) {
+			received <- e.Path
+		})
+	}()
+
+	time.Sleep(300 * time.Millisecond)
+
+	// 刪除排除目錄
+	os.RemoveAll(excludedDir)
+	time.Sleep(100 * time.Millisecond)
+
+	// 重新建立排除目錄
+	if err := os.MkdirAll(excludedDir, 0o755); err != nil {
+		t.Fatalf("re-mkdir: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// 在重建的排除目錄內建立檔案 — 不應觸發 onEvent
+	os.WriteFile(filepath.Join(excludedDir, "after_recreate.txt"), []byte("x"), 0o644)
+	time.Sleep(100 * time.Millisecond)
+
+	// 在允許目錄建立檔案確認 watcher 運作
+	allowedFile := filepath.Join(root, "ok2.txt")
+	os.WriteFile(allowedFile, []byte("world"), 0o644)
+
+	exclLower := strings.ToLower(filepath.ToSlash(excludedDir))
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case got := <-received:
+			gotLower := strings.ToLower(filepath.ToSlash(got))
+			if gotLower == exclLower || strings.HasPrefix(gotLower, exclLower+"/") {
+				cancel()
+				<-errCh
+				t.Fatalf("排除目錄內的事件不應被回報（deleted and recreated）：%q", got)
+			}
+			if filepath.Clean(got) == filepath.Clean(allowedFile) {
+				cancel()
+				<-errCh
+				return // success
+			}
+		case <-deadline:
+			cancel()
+			<-errCh
+			t.Fatal("timeout: 未收到允許檔案的 onEvent 回呼")
+		}
+	}
+}

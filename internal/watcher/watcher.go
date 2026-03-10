@@ -126,10 +126,25 @@ func RunWithOptions(ctx context.Context, root string, opt Options) error {
 		}
 	}
 }
-func addRecursive(w *fsnotify.Watcher, root string, skipFn func(string) bool) error {
+
+// watchAdder 是 addRecursive 所需的最小介面，讓函式可在測試中以 mock 替換真實的 fsnotify.Watcher。
+type watchAdder interface {
+	Add(path string) error
+}
+
+func addRecursive(w watchAdder, root string, skipFn func(string) bool) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			if path == root {
+				// 根目錄本身無法存取時，視為致命錯誤直接回傳。
+				return err
+			}
+			// 非根目錄的錯誤（例如目錄剛被建立尚未穩定、權限不足）
+			// 不中斷整個遍歷，改為略過該目錄並繼續處理其他目錄。
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if !d.IsDir() {
 			return nil

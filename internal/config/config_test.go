@@ -930,3 +930,43 @@ func TestFillWatchExcludeDefaults_DefaultPasswordVerifies(t *testing.T) {
 		t.Fatal("default password should verify against default hash")
 	}
 }
+
+// TestDefaultWatchExcludeDirs_ContainsTests 確認 tests 目錄已加入預設排除清單。
+func TestDefaultWatchExcludeDirs_ContainsTests(t *testing.T) {
+	found := false
+	for _, d := range DefaultWatchExcludeDirs {
+		if d == "tests" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("DefaultWatchExcludeDirs 應包含 \"tests\"，目前內容：%v", DefaultWatchExcludeDirs)
+	}
+}
+
+// TestFillWatchExcludeDefaults_TestsDirIncludedOnEmptyLoad 確認全新載入後 WatchExclude.Dirs 包含 tests。
+func TestFillWatchExcludeDefaults_TestsDirIncludedOnEmptyLoad(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+	t.Setenv("XWATCH_SKIP_ACL", "1")
+
+	root := filepath.Join(tmp, "root")
+	if err := Save(Settings{RootDir: root}); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	found := false
+	for _, d := range s.WatchExclude.Dirs {
+		if d == "tests" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("全新載入後 WatchExclude.Dirs 應包含 \"tests\"，目前：%v", s.WatchExclude.Dirs)
+	}
+}

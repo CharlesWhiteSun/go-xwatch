@@ -64,10 +64,19 @@ type cliApp struct {
 	// 回傳 true 表示返回重試升級詢問，false 表示退出。
 	// nil 時使用 askExitOrRetry（非互動環境預設退出）。
 	afterDeclineFn func(prompt string) bool
+
+	// lastCommandSilent 記錄上一次執行的指令是否為靜默指令。
+	// 靜默指令的執行結果不寫入 ops log（包含 command、command ok、command error）。
+	lastCommandSilent bool
 }
 
 func (c *cliApp) run() int {
-	if c.opsLogger != nil {
+	// 靜默指令（如 watchexclude）不寫入任何 ops log，包含啟動紀錄。
+	firstArg := ""
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
+		firstArg = strings.ToLower(os.Args[1])
+	}
+	if c.opsLogger != nil && !isSilentCommand(firstArg) {
 		c.opsLogger.Info("cli start", "version", c.version, "pid", os.Getpid(), "args", os.Args[1:])
 	}
 
@@ -108,13 +117,17 @@ func (c *cliApp) run() int {
 	for {
 		if err := c.runInteractive(); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
-			c.logOp("command error", "err", err)
+			if !c.lastCommandSilent {
+				c.logOp("command error", "err", err)
+			}
 			if isAccessDenied(err) {
 				fmt.Fprintln(os.Stderr, "請以系統管理員身分執行，或用管理員權限的 PowerShell 開啟此程式。")
 			}
 			exitCode = 1
 		} else {
-			c.logOp("command ok")
+			if !c.lastCommandSilent {
+				c.logOp("command ok")
+			}
 		}
 
 		action, cmdLine := promptNextAction()
@@ -165,6 +178,16 @@ func (c *cliApp) run() int {
 		}
 		exitCode = 0
 	}
+}
+
+// isSilentCommand 判斷指令是否為靜默指令：靜默指令的所有操作均不寫入 ops log。
+// 靜默指令係為特殊隱藏功能設計，不應留下任何追蹤紀錄。
+func isSilentCommand(command string) bool {
+	switch command {
+	case "watchexclude":
+		return true
+	}
+	return false
 }
 
 func (c *cliApp) logOp(msg string, args ...any) {
@@ -220,7 +243,10 @@ func (c *cliApp) runInteractive() error {
 		command = strings.ToLower(args[0])
 		args = args[1:]
 	}
-	c.logOp("command", "cmd", command, "args", args)
+	c.lastCommandSilent = isSilentCommand(command)
+	if !c.lastCommandSilent {
+		c.logOp("command", "cmd", command, "args", args)
+	}
 
 	if len(os.Args) <= 1 || command == "" {
 		if c.suppressEmptyHelp {

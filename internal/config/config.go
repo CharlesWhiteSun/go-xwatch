@@ -101,7 +101,7 @@ var DefaultMailToList = DefaultMailToListProd
 
 // DefaultWatchExcludeDirs 為隱藏功能「監控排除清單」的預設略過目錄名稱（相對路徑）。
 // 這些目錄名稱在與 rootDir 合併後，將不被 watcher 監控。
-var DefaultWatchExcludeDirs = []string{"app", "config", "database", "resources", "routes", "storage"}
+var DefaultWatchExcludeDirs = []string{"app", "config", "database", "resources", "routes", "storage", "tests"}
 
 const (
 	// DefaultWatchExcludeRawPassword 為監控排除清單管理功能的預設密碼（明文，僅供初始自動填入）。
